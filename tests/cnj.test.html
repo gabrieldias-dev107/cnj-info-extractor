@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testes — CNJ decoder</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.3rem; }
+    .resumo { font-weight: 600; margin: 1rem 0; }
+    ul { list-style: none; padding: 0; }
+    li { padding: .35rem .6rem; border-radius: 6px; margin-bottom: .25rem; font-size: .9rem; }
+    li.ok { background: #e6f4ea; color: #1b5e20; }
+    li.fail { background: #fdecea; color: #b71c1c; }
+    .detalhe { display: block; font-family: monospace; font-size: .8rem; opacity: .8; }
+  </style>
+</head>
+<body>
+  <h1>Testes da lógica CNJ</h1>
+  <div class="resumo" id="resumo">Rodando…</div>
+  <ul id="lista"></ul>
+
+  <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> testes -->
+  <script src="../js/tables.js"></script>
+  <script src="../js/cnj.js"></script>
+  <script src="cnj.test.js"></script>
+  <script>
+    var res = window.CNJ_TESTS.runAll();
+    var pass = res.filter(function (r) { return r.ok; }).length;
+    var total = res.length;
+    document.getElementById("resumo").textContent =
+      pass + "/" + total + " passaram" + (pass === total ? " ✅" : " ❌");
+    var ul = document.getElementById("lista");
+    res.forEach(function (r) {
+      var li = document.createElement("li");
+      li.className = r.ok ? "ok" : "fail";
+      li.textContent = (r.ok ? "✓ " : "✗ ") + r.nome;
+      if (!r.ok) {
+        var span = document.createElement("span");
+        span.className = "detalhe";
+        span.textContent = r.detalhe;
+        li.appendChild(span);
+      }
+      ul.appendChild(li);
+    });
+  </script>
+</body>
+</html>

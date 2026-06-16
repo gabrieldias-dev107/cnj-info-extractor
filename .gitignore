@@ -1,0 +1,15 @@
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Node (o projeto não usa deps, mas previne commit acidental)
+node_modules/
+
+# Vercel
+.vercel

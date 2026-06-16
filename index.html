@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Decodificador de Número CNJ</title>
+  <meta name="description" content="Cole um número único CNJ e veja o segmento da Justiça, tribunal, ano, origem e a validação do dígito verificador — tudo offline.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Decodificador de Número CNJ</h1>
+      <p class="subtitulo">
+        Cole um número único de processo (Resolução CNJ nº 65/2008) e veja o que ele
+        revela: segmento da Justiça, tribunal, ano, unidade de origem e se o dígito
+        verificador é válido. Tudo processado no seu navegador — nada é enviado para servidores.
+      </p>
+    </header>
+
+    <section class="entrada">
+      <label for="cnj-input">Número do processo</label>
+      <input
+        id="cnj-input"
+        type="text"
+        inputmode="numeric"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="0000000-00.0000.0.00.0000"
+        aria-describedby="contador">
+      <div id="contador" class="contador">0/20 dígitos</div>
+
+      <div class="exemplos">
+        <span>Exemplos:</span>
+        <button type="button" data-exemplo="0001327-88.2018.8.26.0344">TJSP</button>
+        <button type="button" data-exemplo="0010500-52.2019.5.02.0011">TRT 2ª</button>
+        <button type="button" data-exemplo="0002250-82.2021.4.03.6100">TRF 3ª</button>
+        <button type="button" data-exemplo="0000600-20.2022.6.26.0001">TRE-SP</button>
+        <button type="button" data-exemplo="0000123-43.2020.3.00.0000">STJ</button>
+      </div>
+    </section>
+
+    <section id="resultado" class="resultado vazio" aria-live="polite"></section>
+
+    <section class="ajuda">
+      <h2>Como o número é formado</h2>
+      <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
+      <dl>
+        <dt>NNNNNNN</dt><dd>Número sequencial do processo na unidade de origem, por ano.</dd>
+        <dt>DD</dt><dd>Dígito verificador (módulo 97, ISO 7064) — detecta erros de digitação.</dd>
+        <dt>AAAA</dt><dd>Ano de autuação do processo.</dd>
+        <dt>J</dt><dd>Segmento do Poder Judiciário (1=STF, 4=Federal, 5=Trabalho, 6=Eleitoral, 8=Estadual…).</dd>
+        <dt>TR</dt><dd>Tribunal (depende do segmento: região do TRF/TRT, estado do TJ/TRE…).</dd>
+        <dt>OOOO</dt><dd>Unidade de origem (vara/foro). Aqui mostramos apenas o código — o nome não está disponível offline.</dd>
+      </dl>
+    </section>
+
+    <footer>
+      <p>Decodificação local, sem consulta a tribunais. Base: Resolução CNJ nº 65/2008.</p>
+    </footer>
+  </main>
+
+  <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> app -->
+  <script src="js/tables.js"></script>
+  <script src="js/cnj.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
