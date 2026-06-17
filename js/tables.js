@@ -78,6 +78,55 @@
     return { nome: "Código de tribunal " + tr, conhecido: false };
   }
 
+  // Aliases especiais de Justiça Estadual cujo índice DataJud foge da regra "tj"+uf.
+  var ALIAS_TJ_ESPECIAL = { "07": "tjdft" }; // DF -> Tribunal de Justiça do DF e Territórios
+
+  // Deriva o alias do índice DataJud (ex.: "api_publica_tjsp") a partir de J e TR.
+  // Retorna { alias: string|null, conhecido: boolean }. alias null => sem consulta online.
+  function deriveAlias(segmento, tribunal) {
+    var j = String(segmento);
+    var tr = String(tribunal);
+    var pre = "api_publica_";
+    var uf, n;
+
+    switch (j) {
+      case "1": return { alias: pre + "stf", conhecido: true };
+      case "3": return { alias: pre + "stj", conhecido: true };
+      case "7": return { alias: pre + "stm", conhecido: true };
+
+      case "4": // Justiça Federal
+        if (tr === "90") return { alias: null, conhecido: false }; // CJF não tem índice público
+        n = Number(tr);
+        if (n >= 1 && n <= 6) return { alias: pre + "trf" + n, conhecido: true };
+        return { alias: null, conhecido: false };
+
+      case "5": // Justiça do Trabalho
+        if (tr === "90") return { alias: pre + "tst", conhecido: true };
+        n = Number(tr);
+        if (n >= 1 && n <= 24) return { alias: pre + "trt" + n, conhecido: true };
+        return { alias: null, conhecido: false };
+
+      case "6": // Justiça Eleitoral
+        if (tr === "00") return { alias: pre + "tse", conhecido: true };
+        uf = UF_POR_CODIGO[tr];
+        if (uf) return { alias: pre + "tre-" + uf.toLowerCase(), conhecido: true };
+        return { alias: null, conhecido: false };
+
+      case "8": // Justiça Estadual
+        if (ALIAS_TJ_ESPECIAL[tr]) return { alias: pre + ALIAS_TJ_ESPECIAL[tr], conhecido: true };
+        uf = UF_POR_CODIGO[tr];
+        if (uf) return { alias: pre + "tj" + uf.toLowerCase(), conhecido: true };
+        return { alias: null, conhecido: false };
+
+      case "9": // Justiça Militar Estadual: só MG (13), RS (21), SP (26)
+        if (TJM[tr]) return { alias: pre + "tjm" + UF_POR_CODIGO[tr].toLowerCase(), conhecido: true };
+        return { alias: null, conhecido: false };
+
+      default: // "2" (CNJ) e desconhecidos: sem índice público
+        return { alias: null, conhecido: false };
+    }
+  }
+
   // Resolve o nome do tribunal a partir do segmento (J) e do código TR.
   function nomeTribunal(j, tr) {
     switch (j) {
@@ -94,5 +143,5 @@
     }
   }
 
-  global.CNJ_TABLES = { SEGMENTOS: SEGMENTOS, nomeTribunal: nomeTribunal };
+  global.CNJ_TABLES = { SEGMENTOS: SEGMENTOS, nomeTribunal: nomeTribunal, deriveAlias: deriveAlias };
 })(typeof window !== "undefined" ? window : globalThis);

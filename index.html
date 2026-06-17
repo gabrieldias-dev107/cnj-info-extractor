@@ -14,7 +14,9 @@
       <p class="subtitulo">
         Cole um número único de processo (Resolução CNJ nº 65/2008) e veja o que ele
         revela: segmento da Justiça, tribunal, ano, unidade de origem e se o dígito
-        verificador é válido. Tudo processado no seu navegador — nada é enviado para servidores.
+        verificador é válido. A decodificação acontece toda no seu navegador. Você também pode,
+        opcionalmente, clicar em <strong>Consultar online</strong> para buscar dados públicos do
+        processo na API do DataJud (CNJ) — essa etapa, e só ela, envia o número a um servidor.
       </p>
     </header>
 
@@ -42,6 +44,8 @@
 
     <section id="resultado" class="resultado vazio" aria-live="polite"></section>
 
+    <section id="resultado-online" class="resultado-online vazio" aria-live="polite"></section>
+
     <section class="ajuda">
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
@@ -56,13 +60,14 @@
     </section>
 
     <footer>
-      <p>Decodificação local, sem consulta a tribunais. Base: Resolução CNJ nº 65/2008.</p>
+      <p>Decodificação local (Resolução CNJ nº 65/2008). Consulta online opcional via API Pública do DataJud (CNJ); a API pública não retorna partes nem advogados.</p>
     </footer>
   </main>
 
   <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> app -->
   <script src="js/tables.js"></script>
   <script src="js/cnj.js"></script>
+  <script src="js/api.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

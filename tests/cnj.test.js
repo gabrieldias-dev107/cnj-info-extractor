@@ -3,6 +3,7 @@
 (function (global) {
   "use strict";
   var C = global.CNJ;
+  var T = global.CNJ_TABLES;
 
   var casos = [];
   function t(nome, fn) { casos.push({ nome: nome, fn: fn }); }
@@ -77,6 +78,24 @@
     var d = C.describe("0000123-" + dvFix + ".2020.8.99.0000");
     notOk(d.tribunalConhecido);
   });
+
+  // --- deriveAlias (índice DataJud por segmento+tribunal) ---
+  t("deriveAlias TJSP", function () { eq(T.deriveAlias("8", "26").alias, "api_publica_tjsp"); });
+  t("deriveAlias TRT 2ª", function () { eq(T.deriveAlias("5", "02").alias, "api_publica_trt2"); });
+  t("deriveAlias TRF 3ª", function () { eq(T.deriveAlias("4", "03").alias, "api_publica_trf3"); });
+  t("deriveAlias TRE-SP", function () { eq(T.deriveAlias("6", "26").alias, "api_publica_tre-sp"); });
+  t("deriveAlias TSE", function () { eq(T.deriveAlias("6", "00").alias, "api_publica_tse"); });
+  t("deriveAlias STJ", function () { eq(T.deriveAlias("3", "00").alias, "api_publica_stj"); });
+  t("deriveAlias TST", function () { eq(T.deriveAlias("5", "90").alias, "api_publica_tst"); });
+  t("deriveAlias TJM-SP", function () { eq(T.deriveAlias("9", "26").alias, "api_publica_tjmsp"); });
+  t("deriveAlias DF vira tjdft", function () { eq(T.deriveAlias("8", "07").alias, "api_publica_tjdft"); });
+  t("deriveAlias UF estadual desconhecida -> null", function () {
+    var r = T.deriveAlias("8", "99");
+    ok(r.alias === null);
+    notOk(r.conhecido);
+  });
+  t("deriveAlias CJF (J=4 TR=90) -> null", function () { ok(T.deriveAlias("4", "90").alias === null); });
+  t("deriveAlias segmento CNJ (J=2) -> null", function () { ok(T.deriveAlias("2", "00").alias === null); });
 
   function runAll() {
     return casos.map(function (c) {

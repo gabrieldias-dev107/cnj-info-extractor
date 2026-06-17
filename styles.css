@@ -169,6 +169,109 @@ header h1 {
 .badge-erro { background: var(--erro-bg); color: var(--erro); }
 .badge-warn { background: var(--warn-bg); color: var(--warn); }
 
+/* ---- Consulta online (DataJud) ---- */
+.consulta-online-acao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin-top: 1.25rem;
+}
+
+.btn-consultar {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: .6rem 1.1rem;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius);
+  background: var(--brand);
+  color: #fff;
+  transition: background .15s ease, opacity .15s ease;
+}
+.btn-consultar:hover { background: var(--brand-ink); }
+.btn-consultar:disabled { opacity: .5; cursor: not-allowed; }
+
+.consulta-nota { font-size: .85rem; color: var(--muted); }
+
+.resultado-online { margin-top: 1.75rem; }
+.resultado-online.vazio:empty { display: none; }
+.resultado-online .titulo-resultado { color: var(--brand-ink); }
+
+.online-status {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  color: var(--muted);
+}
+
+.online-vazio { color: var(--muted); }
+
+.online-erro {
+  background: var(--erro-bg);
+  color: var(--erro);
+  border-radius: var(--radius);
+  padding: .75rem 1rem;
+  margin: 0;
+}
+
+.online-sub {
+  font-size: 1rem;
+  margin: 1.5rem 0 .75rem;
+  color: var(--brand-ink);
+}
+
+.spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: girar .7s linear infinite;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 1.1rem;
+  border-left: 2px solid var(--line);
+}
+.timeline li {
+  position: relative;
+  padding: 0 0 1rem 1rem;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -1.55rem;
+  top: .35rem;
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  background: var(--brand);
+}
+.timeline .mov-nome { display: block; }
+.timeline .data {
+  display: block;
+  color: var(--muted);
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mostrar-mais {
+  font: inherit;
+  font-size: .85rem;
+  cursor: pointer;
+  margin-top: .5rem;
+  padding: .3rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand);
+}
+.mostrar-mais:hover { background: #eef3fb; border-color: var(--brand); }
+
 /* ---- Ajuda ---- */
 .ajuda h2 {
   font-size: 1.15rem;
