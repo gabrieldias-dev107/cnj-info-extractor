@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS processes (
   id UUID PRIMARY KEY,
-  numero CHAR(20) NOT NULL UNIQUE,
+  numero VARCHAR(20) NOT NULL UNIQUE,
   alias TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS batch_items (
   id UUID PRIMARY KEY,
   batch_id UUID NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
   linha INTEGER NOT NULL,
-  numero CHAR(20),
+  numero VARCHAR(20),
   alias TEXT,
   status TEXT NOT NULL CHECK (status IN ('pendente', 'processando', 'concluido', 'invalido', 'duplicado', 'falhou')),
   erro TEXT,
