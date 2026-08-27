@@ -20,3 +20,4 @@ node_modules/
 
 # Agent execution state
 .superpowers/
+.worktrees/
