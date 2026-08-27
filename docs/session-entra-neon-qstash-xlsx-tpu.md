@@ -57,14 +57,46 @@ Entra redirect URI:
 - `index.html`, `js/api.js`, `js/app.js`, `styles.css` — SSO redirect and triage UI.
 - `tests/node/*`, `README.md`, `.env.example`, `package.json` — coverage, operations docs, configuration, checks.
 
+## Follow-up session (2026-08-27)
+The P0 was committed but not operable. `api/auth/login.js`, `api/auth/callback.js`
+and `api/maintenance/purge.js` imported `../../../server/*`, one level above the
+repository root, so Entra login and the retention purge failed with
+`ERR_MODULE_NOT_FOUND` in production. CI stayed green because `npm run check`
+was a chain of `node --check` calls, which only parse syntax, and no test
+imported those three files.
+
+Closed in `feature/p0-triagem`:
+- Import paths fixed; `npm run check` is now `scripts/check-imports.mjs`, which
+  imports every module for real, and CI runs `npm ci` before it.
+- Offline decoding is public again — the SSO redirect on page load was bouncing
+  every visitor to Microsoft, contradicting the README and `index.html`.
+- Server-side CSV import, chosen by request `Content-Type`; the README already
+  promised it.
+- TPU stage rendered in the single lookup and in a per-row batch table; the
+  classification was invisible outside the exports.
+- Allowed e-mail domain moved to `SSO_EMAIL_DOMINIO` (default `btblue.com.br`).
+- `POST /api/batches` now returns `login: "sso"` on 401, like its sibling routes.
+- 69 new tests covering `server/db.js`, `server/queue.js`, `server/sso.js`,
+  `api/batch-worker.js`, `api/batches/*`, `api/auth/*` and the purge endpoint —
+  all of which had zero coverage. Suite: 115 tests, all passing.
+
 ## Blockers & Open Questions
 - Rotate the Entra client secret exposed in the conversation; never commit it.
-- Production Vercel/Neon/QStash integration was not run from this workspace.
-- TPU mapping needs legal validation before adding codes beyond `12548`.
+- Production Vercel/Neon/QStash integration was not run from this workspace, so
+  the Entra login, the signed worker and the purge schedule are still unverified
+  against the real services.
+- TPU mapping needs legal validation before adding codes beyond `12548`;
+  `penhora` and `execucao` have TTLs but no code mapped to them.
 - Static assets remain readable by URL; APIs and interactive flow enforce SSO.
+- `main` has never received this work — it sits behind both
+  `feature/datajud-security-hardening` and `feature/p0-triagem`.
 
 ## Next Steps
-1. Rotate `M365_CLIENT_SECRET`; configure all listed variables in Vercel Production and Preview.
-2. Run `npm run db:migrate` against Neon, then schedule QStash `POST /api/maintenance/purge`.
-3. Register Entra Web redirect URI and homologate login, logout, worker signature, one CSV and one XLSX batch.
+1. Rotate `M365_CLIENT_SECRET`; configure all listed variables, plus the optional
+   `SSO_EMAIL_DOMINIO`, in Vercel Production and Preview.
+2. Run `npm run db:migrate` against Neon, then create the QStash schedule for
+   `POST /api/maintenance/purge` (command in the README).
+3. Register the Entra Web redirect URI and homologate login, logout, worker
+   signature, one CSV and one XLSX batch.
 4. Validate and add TPU mappings with legal approval.
+5. Decide when to merge `feature/p0-triagem` into `main`.

@@ -6,6 +6,9 @@ const ESTAGIO_POR_CODIGO = new Map([
   [12548, "expedicao_alvara"],
 ]);
 
+// `penhora` e `execucao` ainda não são alcançáveis: nenhum código da TPU está
+// mapeado para eles. Os TTLs ficam pré-provisionados para que a curadoria
+// jurídica precise mexer só em ESTAGIO_POR_CODIGO.
 const TTL_POR_ESTAGIO = {
   expedicao_alvara: 24 * 60 * 60 * 1000,
   penhora: 24 * 60 * 60 * 1000,

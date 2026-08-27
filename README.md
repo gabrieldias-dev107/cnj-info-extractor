@@ -46,10 +46,19 @@ a consulta online é feita, o órgão julgador vem no retorno do DataJud.
 - `js/cnj.js` — lógica pura (normalizar, máscara, parse, validar, descrever).
 - `js/api.js` — cliente autenticado da consulta online, com cache em `localStorage` (24h).
 - `js/app.js` — integração com o DOM.
-- `api/session.js` — login/logout por senha compartilhada e cookie assinado de 8h.
+- `api/session.js` — estado da sessão: modo Entra (GET/DELETE) ou senha compartilhada.
 - `api/datajud.js` — proxy serverless para o DataJud (sessão, origem restrita, rate limit,
   taxonomia de erro, log estruturado).
-- `server/` — autenticação, origem e rate limit no Upstash Redis via REST.
+- `api/auth/login.js`, `api/auth/callback.js` — início e conclusão do OIDC no Entra.
+- `api/batches/index.js` — cria o lote (`POST`) e devolve status com triagem por linha (`GET`).
+- `api/batches/import.js` — importa CSV ou XLSX; o formato vem do `Content-Type`.
+- `api/batches/export.js` — baixa o resultado em CSV ou XLSX.
+- `api/batch-worker.js` — worker chamado pelo QStash, com assinatura verificada.
+- `api/maintenance/purge.js` — expurgo de retenção, também assinado pelo QStash.
+- `server/` — SSO, banco, fila, validação CNJ, planilhas, origem e rate limit.
+- `db/migrations/` — esquema Neon; aplicado por `scripts/migrate.js` (`npm run db:migrate`).
+- `scripts/check-imports.mjs` — `npm run check`: importa cada módulo para pegar
+  especificador quebrado, que `node --check` não detecta.
 - `tests/node/` — testes automatizados com o test runner nativo do Node.
 - `tests/cnj.test.html` — testes da lógica pura; abra no navegador (todos devem ficar verdes).
 
@@ -69,6 +78,12 @@ Variáveis documentadas em `.env.example`. Localmente, `vercel env pull` gera o 
 | `RL_CLIENTE_MIN` / `RL_GLOBAL_MIN` / `RL_GLOBAL_DIA` | não | Limites DataJud (30/min por IP, 300/min e 2.000/dia globais) |
 | `RL_LOGIN_15MIN` | não | Tentativas de login por IP em 15 minutos (padrão: 10) |
 | `RL_REDIS_TIMEOUT_MS` | não | Timeout do Redis em milissegundos (padrão: 3.000) |
+| `M365_TENANT_ID` / `M365_CLIENT_ID` / `M365_CLIENT_SECRET` | modo interno | Aplicação Entra; ativam o SSO |
+| `DATABASE_URL` | modo interno | Neon: sessões, snapshots, lotes e auditoria |
+| `APP_BASE_URL` | modo interno | Base do redirect URI e do destino dos jobs QStash |
+| `SSO_EMAIL_DOMINIO` | não | Domínio de e-mail aceito no login (padrão: `btblue.com.br`) |
+| `QSTASH_TOKEN` | lotes | Publica os jobs de triagem |
+| `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | lotes | Verificam a assinatura do worker e do expurgo |
 
 ### Rotação da chave do DataJud
 
@@ -92,7 +107,17 @@ cookie temporário do OIDC.
 Cadastre `<APP_BASE_URL>/api/auth/callback` como redirect URI Web no Entra. Rode
 `npm run db:migrate` uma vez contra o Neon antes do deploy; snapshots, movimentos
 e eventos de consulta expiram após 180 dias. A classificação usa somente códigos
-TPU versionados: um código sem curadoria permanece `não classificado`.
+TPU versionados: um código sem curadoria permanece `não classificado` — hoje esse
+é o caso comum, já que só `12548` (expedição de alvará) está mapeado. O estágio
+aparece no resultado da consulta única, na tabela por linha do lote e na
+exportação.
+
+Mesmo com SSO ligado, **a decodificação offline continua pública**: abrir a página
+não redireciona ninguém para o Entra. O login só é acionado nas ações que exigem
+identidade — consulta online, envio de lote e importação de planilha.
+
+O domínio de e-mail aceito vem de `SSO_EMAIL_DOMINIO` (padrão `btblue.com.br`);
+além dele, o `tid` do token precisa bater com `M365_TENANT_ID`.
 
 Sem estas variáveis, o comportamento legado por senha fica somente para
 desenvolvimento/homologação. Não configure produção parcialmente.
@@ -100,12 +125,15 @@ desenvolvimento/homologação. Não configure produção parcialmente.
 ### Triagem em lote
 
 O painel aceita até 500 números por envio, separados por linha, vírgula ou ponto
-e vírgula, ou por arquivo CSV/XLSX de até 2 MiB. A validação do dígito e o alias
-DataJud ocorrem no servidor. Linhas inválidas e duplicadas ficam registradas e
+e vírgula, ou por arquivo CSV/XLSX de até 2 MiB — ambos os formatos são lidos no
+servidor, que escolhe o parser pelo `Content-Type` da requisição, nunca pelo nome
+do arquivo. Se houver uma coluna `numero` no cabeçalho, ela é a usada; senão, a
+primeira. A validação do dígito e o alias DataJud ocorrem no servidor. Linhas inválidas e duplicadas ficam registradas e
 não vão para a fila. Os jobs QStash usam controle global de cinco consultas
 paralelas; o estado do lote pode ser consultado em `GET /api/batches?id=<uuid>`
-pelo mesmo usuário que o criou. O resultado baixa em CSV ou XLSX; o CSV trata
-fórmulas como texto para evitar injeção em planilhas.
+pelo mesmo usuário que o criou, que também devolve a triagem por linha (número,
+situação e estágio TPU) exibida no painel. O resultado baixa em CSV ou XLSX; o CSV
+trata fórmulas como texto para evitar injeção em planilhas.
 
 Configure `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` e
 `QSTASH_NEXT_SIGNING_KEY` na Vercel. Não exponha estas variáveis no navegador.
@@ -129,7 +157,14 @@ sem login no mesmo período.
 O decodificador offline permanece público. A consulta online exige uma senha compartilhada:
 `POST /api/session` cria um cookie `HttpOnly`, `SameSite=Strict`, restrito a `/api`, assinado
 por HMAC e válido por 8 horas. `DELETE /api/session` encerra a sessão e limpa o cache DataJud
-no navegador. Esta solução não exige plano pago nem dependência externa de autenticação.
+no navegador.
+
+Com o SSO ligado o contrato muda: `POST /api/session` passa a responder
+`405 metodo_nao_permitido`, `GET` devolve o usuário autenticado ou
+`401 { error: "autenticacao_necessaria", login: "sso" }` — a marca que leva o
+cliente ao Entra — e `DELETE` apaga a sessão no banco. O cookie da sessão Entra é
+`cnj_sso` (`HttpOnly`, `SameSite=Lax`, `Path=/`, 8 horas), opaco e revogável, ao
+contrário do cookie stateless do modo por senha. Esta solução não exige plano pago nem dependência externa de autenticação.
 
 Como a sessão é stateless, logout remove o cookie do navegador, mas não revoga uma cópia do
 token até expirar. Se houver suspeita de exposição, troque `SESSION_SECRET` para invalidar
