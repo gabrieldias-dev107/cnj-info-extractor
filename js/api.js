@@ -44,6 +44,7 @@
     if (resp.ok) return true;
     var retorno;
     try { retorno = await resp.json(); } catch (e) { retorno = {}; }
+    if (retorno && retorno.login === "sso") throw new Error("autenticacao_sso");
     throw new Error((retorno && retorno.error) || "erro_servidor");
   }
 
@@ -53,6 +54,10 @@
 
   function entrar(senha) {
     return requisicaoSessao("POST", { senha: senha });
+  }
+
+  function iniciarSso() {
+    global.location.href = "/api/auth/login";
   }
 
   function limparCache() {
@@ -103,10 +108,54 @@
     return body;
   }
 
+  async function requisicaoLote(url, method, dados) {
+    var opcoes = { method: method, credentials: "same-origin" };
+    if (dados) {
+      opcoes.headers = { "Content-Type": "application/json" };
+      opcoes.body = JSON.stringify(dados);
+    }
+    var resp = await fetch(url, opcoes);
+    var body;
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      if (body && body.login === "sso") throw new Error("autenticacao_sso");
+      throw new Error((body && body.error) || "erro_servidor");
+    }
+    return body;
+  }
+
+  function criarLote(numeros) {
+    return requisicaoLote("/api/batches", "POST", { numeros: numeros });
+  }
+
+  function consultarLote(id) {
+    return requisicaoLote("/api/batches?id=" + encodeURIComponent(id), "GET");
+  }
+
+  async function importarXlsx(arquivo) {
+    var resp = await fetch("/api/batches/import", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      body: arquivo,
+    });
+    var body;
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      if (body && body.login === "sso") throw new Error("autenticacao_sso");
+      throw new Error((body && body.error) || "erro_servidor");
+    }
+    return body;
+  }
+
   global.CNJApi = {
     consultarProcesso: consultarProcesso,
     verificarSessao: verificarSessao,
     entrar: entrar,
+    iniciarSso: iniciarSso,
     sair: sair,
+    criarLote: criarLote,
+    consultarLote: consultarLote,
+    importarXlsx: importarXlsx,
   };
 })(typeof window !== "undefined" ? window : globalThis);

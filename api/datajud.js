@@ -8,6 +8,9 @@
 import { sessaoValida } from "../server/auth.js";
 import { origemPermitida } from "../server/origin.js";
 import { consumirDatajud } from "../server/rate-limit.js";
+import { currentUser } from "../server/sso.js";
+import { freshSnapshot, persistSnapshot, recordConsultation } from "../server/db.js";
+import { ssoConfigurado } from "../server/sso-config.js";
 
 var BASE = "https://api-publica.datajud.cnj.jus.br";
 var ALIAS_RE = /^api_publica_[a-z0-9-]{1,52}$/;
@@ -137,7 +140,10 @@ export default async function handler(req, res) {
       return responderErro("origem_nao_permitida", { origin: req.headers.origin || null });
     }
 
-    if (!sessaoValida(req)) return responderErro("autenticacao_necessaria");
+    if (ssoConfigurado()) {
+      var usuario = await currentUser(req);
+      if (!usuario) return responderErro("autenticacao_necessaria");
+    } else if (!sessaoValida(req)) return responderErro("autenticacao_necessaria");
 
     var body = req.body;
     if (typeof body === "string") {
@@ -150,6 +156,14 @@ export default async function handler(req, res) {
 
     if (digitos.length !== 20) return responderErro("numero_invalido");
     if (!ALIAS_RE.test(alias)) return responderErro("alias_invalido");
+
+    if (ssoConfigurado()) {
+      var emCache = await freshSnapshot(digitos);
+      if (emCache) {
+        log("info", "consulta_cache", { reqId: reqId, alias: alias, numero: sufixo(digitos) });
+        return res.status(200).json(Object.assign({}, emCache, { cache: "servidor" }));
+      }
+    }
 
     var auth = authHeader(); // lança config_ausente antes de qualquer rede
 
@@ -204,7 +218,13 @@ export default async function handler(req, res) {
       log("info", "indice_vazio", {
         reqId: reqId, alias: alias, numero: sufixo(digitos), duracaoMs: Date.now() - inicio,
       });
-      res.status(200).json({ encontrado: false, total: 0, processos: [] });
+      var vazio = { encontrado: false, total: 0, processos: [] };
+      if (ssoConfigurado()) {
+        var salvoVazio = await persistSnapshot({ numero: digitos, alias: alias, dados: vazio });
+        await recordConsultation(usuario.id, salvoVazio.processId, "unitaria");
+        vazio.estagio = salvoVazio.estagio;
+      }
+      res.status(200).json(vazio);
       return;
     }
 
@@ -217,7 +237,13 @@ export default async function handler(req, res) {
       duracaoMs: Date.now() - inicio,
     });
 
-    res.status(200).json({ encontrado: true, total: processos.length, processos: processos });
+    var resposta = { encontrado: true, total: processos.length, processos: processos };
+    if (ssoConfigurado()) {
+      var salvo = await persistSnapshot({ numero: digitos, alias: alias, dados: resposta });
+      await recordConsultation(usuario.id, salvo.processId, "unitaria");
+      resposta.estagio = salvo.estagio;
+    }
+    res.status(200).json(resposta);
   } catch (e) {
     if (e && e.codigo) return responderErro(e.codigo, e.extra);
     // Sem código na taxonomia = bug nosso. Antes isto virava 504 e ficava

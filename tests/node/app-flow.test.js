@@ -49,6 +49,9 @@ function documentoFake() {
     "cnj-input": "input", resultado: "section", "resultado-online": "section", contador: "div",
     "login-dialog": "dialog", "login-form": "form", "login-password": "input", "login-error": "p",
     "login-submit": "button", "login-cancel": "button", "session-logout": "button",
+    "batch-form": "form", "batch-numbers": "textarea", "batch-file": "input", "batch-submit": "button", "batch-status": "p",
+    "batch-export": "a",
+    "batch-export-xlsx": "a",
   })) ids.set(id, new No(tag, doc));
   return doc;
 }
@@ -108,4 +111,60 @@ test("login retenta consulta, restaura foco e renderiza payload XSS como texto",
   assert.match(online.textContent, /<img src=x/);
   assert.equal(achar(online, (node) => node.tagName === "IMG"), null);
   assert.equal(global.pwned, undefined);
+});
+
+test("consulta sem sessão Entra redireciona sem abrir diálogo de senha", async () => {
+  const document = documentoFake();
+  let iniciouSso = 0;
+  const api = {
+    verificarSessao: async () => { throw new Error("autenticacao_necessaria"); },
+    iniciarSso() { iniciouSso += 1; },
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => { throw new Error("autenticacao_sso"); },
+  };
+  const global = {
+    document,
+    CNJ: {
+      normalize: (valor) => String(valor).replace(/\D/g, ""),
+      format: (valor) => valor,
+      describe: (digitos) => ({ digitos, valido: true, sequencial: "0001327", verificador: "88", ano: "2018", segmento: "8", segmentoNome: "Estadual", tribunal: "26", tribunalNome: "TJSP", tribunalConhecido: true, origem: "0344", formatado: digitos }),
+    },
+    CNJ_TABLES: { deriveAlias: () => ({ alias: "api_publica_tjsp" }) },
+    CNJApi: api,
+    Date,
+    setTimeout,
+    clearTimeout,
+  };
+  global.window = global;
+  global.globalThis = global;
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  const input = document.getElementById("cnj-input");
+  input.value = "00013278820188260344";
+  await input.dispatch("input");
+  const consultar = achar(document.getElementById("resultado"), (node) => node.className === "btn-consultar");
+  await consultar.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(iniciouSso, 1);
+  assert.equal(document.getElementById("login-dialog").open, false);
+});
+
+test("modo Entra inicia login ao abrir a ferramenta", async () => {
+  const document = documentoFake();
+  let iniciouSso = 0;
+  const api = {
+    verificarSessao: async () => { throw new Error("autenticacao_sso"); },
+    iniciarSso() { iniciouSso += 1; },
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({ encontrado: false, processos: [] }),
+  };
+  const global = { document, CNJ: { normalize: () => "", format: () => "", describe: () => null }, CNJ_TABLES: { deriveAlias: () => ({ alias: null }) }, CNJApi: api, Date, setTimeout, clearTimeout };
+  global.window = global;
+  global.globalThis = global;
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(iniciouSso, 1);
 });

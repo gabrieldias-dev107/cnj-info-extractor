@@ -13,6 +13,7 @@
 
   var input, resultado, resultadoOnline, contador;
   var loginDialog, loginForm, loginPassword, loginError, loginSubmit, logoutButton;
+  var batchForm, batchNumbers, batchFile, batchSubmit, batchStatus, batchExport, batchExportXlsx, batchTimer;
   var consultaPendente = null;
   var focoAnterior = null;
   var consultaSeq = 0;
@@ -155,6 +156,11 @@
       if (e && e.message === "autenticacao_necessaria") {
         limparOnline();
         abrirLogin(digitos);
+        return;
+      }
+      if (e && e.message === "autenticacao_sso") {
+        limparOnline();
+        Api.iniciarSso();
         return;
       }
       setOnlineEstado("erro", mensagemErro(e && e.message));
@@ -445,6 +451,79 @@
     }
   }
 
+  function numerosDoLote(valor) {
+    return String(valor || "").split(/[\r\n;,]+/).map(function (numero) { return numero.trim(); }).filter(Boolean);
+  }
+
+  function textoProgresso(lote) {
+    var contagens = lote.contagens || {};
+    var finalizados = (contagens.concluido || 0) + (contagens.invalido || 0) + (contagens.duplicado || 0) + (contagens.falhou || 0);
+    return finalizados + "/" + lote.total + " linhas finalizadas" + (contagens.falhou ? "; " + contagens.falhou + " falharam." : ".");
+  }
+
+  async function atualizarLote(id) {
+    try {
+      var lote = await Api.consultarLote(id);
+      batchStatus.textContent = textoProgresso(lote);
+      if (!["pendente", "processando"].includes(lote.status) && batchTimer) {
+        global.clearInterval(batchTimer);
+        batchTimer = null;
+      }
+      if (!["pendente", "processando"].includes(lote.status)) {
+        batchExport.href = "/api/batches/export?id=" + encodeURIComponent(id);
+        batchExport.hidden = false;
+        batchExportXlsx.href = batchExport.href + "&formato=xlsx";
+        batchExportXlsx.hidden = false;
+      }
+    } catch (e) {
+      batchStatus.textContent = mensagemErro(e && e.message);
+      if (batchTimer) { global.clearInterval(batchTimer); batchTimer = null; }
+    }
+  }
+
+  async function enviarLote(evento) {
+    evento.preventDefault();
+    batchStatus.textContent = "";
+    batchSubmit.disabled = true;
+    batchExport.hidden = true;
+    batchExportXlsx.hidden = true;
+    try {
+      var lote = await Api.criarLote(numerosDoLote(batchNumbers.value));
+      await acompanharNovoLote(lote);
+    } catch (e) {
+      if (e && e.message === "autenticacao_sso") Api.iniciarSso();
+      else batchStatus.textContent = mensagemErro(e && e.message);
+    } finally {
+      batchSubmit.disabled = false;
+    }
+  }
+
+  async function acompanharNovoLote(lote) {
+    batchStatus.textContent = "Lote recebido. Preparando fila…";
+    await atualizarLote(lote.id);
+    if (!batchTimer) batchTimer = global.setInterval(function () { atualizarLote(lote.id); }, 3000);
+  }
+
+  async function importarArquivoLote() {
+    var arquivo = batchFile.files && batchFile.files[0];
+    if (!arquivo) return;
+    batchStatus.textContent = "";
+    batchExport.hidden = true;
+    batchExportXlsx.hidden = true;
+    try {
+      if (/\.xlsx$/i.test(arquivo.name || "")) await acompanharNovoLote(await Api.importarXlsx(arquivo));
+      else {
+        batchNumbers.value = await arquivo.text();
+        batchStatus.textContent = "CSV carregado. Revise e inicie a triagem.";
+      }
+    } catch (e) {
+      if (e && e.message === "autenticacao_sso") Api.iniciarSso();
+      else batchStatus.textContent = mensagemErro(e && e.message);
+    } finally {
+      batchFile.value = "";
+    }
+  }
+
   function init() {
     input = doc.getElementById("cnj-input");
     resultado = doc.getElementById("resultado");
@@ -456,6 +535,13 @@
     loginError = doc.getElementById("login-error");
     loginSubmit = doc.getElementById("login-submit");
     logoutButton = doc.getElementById("session-logout");
+    batchForm = doc.getElementById("batch-form");
+    batchNumbers = doc.getElementById("batch-numbers");
+    batchFile = doc.getElementById("batch-file");
+    batchSubmit = doc.getElementById("batch-submit");
+    batchStatus = doc.getElementById("batch-status");
+    batchExport = doc.getElementById("batch-export");
+    batchExportXlsx = doc.getElementById("batch-export-xlsx");
 
     input.addEventListener("input", aoDigitar);
     loginForm.addEventListener("submit", aoEntrar);
@@ -465,9 +551,13 @@
       if (focoAnterior && typeof focoAnterior.focus === "function") focoAnterior.focus();
     });
     logoutButton.addEventListener("click", sair);
+    batchForm.addEventListener("submit", enviarLote);
+    batchFile.addEventListener("change", importarArquivoLote);
     Api.verificarSessao().then(function () {
       logoutButton.hidden = false;
-    }).catch(function () { /* visitante: decodificador offline continua disponível */ });
+    }).catch(function (erro) {
+      if (erro && erro.message === "autenticacao_sso") Api.iniciarSso();
+    });
 
     var exemplos = doc.querySelectorAll("[data-exemplo]");
     Array.prototype.forEach.call(exemplos, function (btn) {

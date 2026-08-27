@@ -47,6 +47,21 @@
 
     <section id="resultado-online" class="resultado-online vazio" aria-live="polite"></section>
 
+    <section class="lote" aria-labelledby="lote-titulo">
+      <h2 id="lote-titulo">Triagem em lote</h2>
+      <p>Cole até 500 números CNJ, um por linha. Linhas inválidas ficam registradas; números repetidos não entram na fila.</p>
+      <form id="batch-form">
+        <label for="batch-numbers">Números de processo</label>
+        <textarea id="batch-numbers" rows="8" maxlength="25000" placeholder="0001327-88.2018.8.26.0344" required></textarea>
+        <label for="batch-file">Ou importe CSV/XLSX</label>
+        <input id="batch-file" type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <button id="batch-submit" class="btn-consultar" type="submit">Iniciar triagem</button>
+      </form>
+      <p id="batch-status" class="batch-status" role="status" aria-live="polite"></p>
+      <a id="batch-export" class="btn-secundario" hidden>Baixar CSV</a>
+      <a id="batch-export-xlsx" class="btn-secundario" hidden>Baixar XLSX</a>
+    </section>
+
     <section class="ajuda">
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>

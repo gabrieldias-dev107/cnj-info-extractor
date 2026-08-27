@@ -36,6 +36,11 @@ test("consulta verifica sessão antes de ler cache protegido", async () => {
   assert.deepEqual(chamadas.map((item) => item[0]), ["/api/session"]);
 });
 
+test("sessão Entra orienta o cliente para o login SSO", async () => {
+  const { api } = cliente(async () => resposta(401, { error: "autenticacao_necessaria", login: "sso" }));
+  await assert.rejects(() => api.verificarSessao(), /autenticacao_sso/);
+});
+
 test("entrar e sair usam rota de sessão; sair limpa apenas cache DataJud", async () => {
   const chamadas = [];
   const { api, dados } = cliente(async (url, init) => { chamadas.push([url, init]); return resposta(204); }, {
@@ -53,4 +58,23 @@ test("sair limpa cache local mesmo quando a rede falha", async () => {
   const { api, dados } = cliente(async () => { throw new Error("offline"); }, { "datajud:v2:um": "x" });
   await assert.rejects(() => api.sair(), /offline/);
   assert.equal(dados.has("datajud:v2:um"), false);
+});
+
+test("cliente cria lote e consulta seu progresso", async () => {
+  const chamadas = [];
+  const { api } = cliente(async (url, init) => {
+    chamadas.push([url, init]);
+    return resposta(init.method === "POST" ? 202 : 200, init.method === "POST" ? { id: "lote-1" } : { id: "lote-1", contagens: { concluido: 2 } });
+  });
+  assert.deepEqual(await api.criarLote(["0001327-88.2018.8.26.0344"]), { id: "lote-1" });
+  assert.deepEqual(await api.consultarLote("lote-1"), { id: "lote-1", contagens: { concluido: 2 } });
+  assert.deepEqual(chamadas.map(([url, init]) => [url, init.method]), [["/api/batches", "POST"], ["/api/batches?id=lote-1", "GET"]]);
+});
+
+test("cliente envia XLSX como corpo binário para importação", async () => {
+  const chamadas = [];
+  const arquivo = { tipo: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  const { api } = cliente(async (url, init) => { chamadas.push([url, init]); return resposta(202, { id: "lote-xlsx" }); });
+  assert.deepEqual(await api.importarXlsx(arquivo), { id: "lote-xlsx" });
+  assert.deepEqual(chamadas.map(([url, init]) => [url, init.method, init.body]), [["/api/batches/import", "POST", arquivo]]);
 });

@@ -228,6 +228,23 @@ dialog input { width: 100%; min-height: 44px; box-sizing: border-box; padding: .
 .resultado-online.vazio:empty { display: none; }
 .resultado-online .titulo-resultado { color: var(--brand-ink); }
 
+/* ---- Lote ---- */
+.lote {
+  margin-top: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.lote h2 { margin: 0; color: var(--brand-ink); font-size: 1.15rem; }
+.lote p { color: var(--muted); }
+.lote label { display: block; font-weight: 600; margin: 1rem 0 .5rem; }
+.lote textarea { width: 100%; resize: vertical; padding: .75rem; border: 1px solid var(--line); border-radius: var(--radius); font: inherit; }
+.lote textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px rgba(31, 78, 140, .12); }
+.lote .btn-consultar { margin-top: .75rem; }
+.batch-status { min-height: 1.5rem; font-size: .9rem; }
+
 .online-status {
   display: flex;
   align-items: center;

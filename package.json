@@ -4,6 +4,12 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/node/*.test.js",
-    "check": "node --check api/datajud.js && node --check api/session.js && node --check server/auth.js && node --check server/origin.js && node --check server/rate-limit.js && node --check js/tables.js && node --check js/cnj.js && node --check js/api.js && node --check js/app.js"
+    "check": "node --check api/datajud.js && node --check api/session.js && node --check api/auth/login.js && node --check api/auth/callback.js && node --check api/batches/index.js && node --check api/batches/export.js && node --check api/batches/import.js && node --check api/batch-worker.js && node --check api/maintenance/purge.js && node --check server/auth.js && node --check server/batch-export.js && node --check server/batch-service.js && node --check server/cnj-validation.js && node --check server/datajud-client.js && node --check server/db.js && node --check server/sso.js && node --check server/sso-config.js && node --check server/queue.js && node --check server/p0-core.js && node --check server/xlsx.js && node --check server/origin.js && node --check server/rate-limit.js && node --check js/tables.js && node --check js/cnj.js && node --check js/api.js && node --check js/app.js",
+    "db:migrate": "node scripts/migrate.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^5.6.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "@upstash/qstash": "^2.11.3"
   }
 }

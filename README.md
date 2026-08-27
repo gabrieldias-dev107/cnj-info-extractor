@@ -81,7 +81,38 @@ Se a variável estiver ausente, o proxy responde `500 config_ausente` e registra
 log. Ele **não** cai em uma chave embutida: uma cópia versionada envelhece silenciosamente e
 deixa o repositório servindo de proxy gratuito para quem o clonar.
 
-### Acesso
+### P0: SSO e persistência
+
+Com `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`, `SESSION_SECRET` e
+`DATABASE_URL` configurados, a ferramenta entra no modo interno: somente contas
+`@btblue.com.br` do tenant Microsoft Entra autenticam, e o login por senha deixa
+de ser aceito. Os nomes `ENTRA_*` seguem aceitos só para compatibilidade; não
+configure ambos. `SESSION_SECRET` deve ter pelo menos 32 caracteres e assina o
+cookie temporário do OIDC.
+Cadastre `<APP_BASE_URL>/api/auth/callback` como redirect URI Web no Entra. Rode
+`npm run db:migrate` uma vez contra o Neon antes do deploy; snapshots, movimentos
+e eventos de consulta expiram após 180 dias. A classificação usa somente códigos
+TPU versionados: um código sem curadoria permanece `não classificado`.
+
+Sem estas variáveis, o comportamento legado por senha fica somente para
+desenvolvimento/homologação. Não configure produção parcialmente.
+
+### Triagem em lote
+
+O painel aceita até 500 números por envio, separados por linha, vírgula ou ponto
+e vírgula, ou por arquivo CSV/XLSX de até 2 MiB. A validação do dígito e o alias
+DataJud ocorrem no servidor. Linhas inválidas e duplicadas ficam registradas e
+não vão para a fila. Os jobs QStash usam controle global de cinco consultas
+paralelas; o estado do lote pode ser consultado em `GET /api/batches?id=<uuid>`
+pelo mesmo usuário que o criou. O resultado baixa em CSV ou XLSX; o CSV trata
+fórmulas como texto para evitar injeção em planilhas.
+
+Configure `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` e
+`QSTASH_NEXT_SIGNING_KEY` na Vercel. Agende `POST /api/maintenance/purge` no
+QStash para expurgar sessões, lotes e snapshots vencidos. Não exponha estas
+variáveis no navegador.
+
+### Acesso legado
 
 O decodificador offline permanece público. A consulta online exige uma senha compartilhada:
 `POST /api/session` cria um cookie `HttpOnly`, `SameSite=Strict`, restrito a `/api`, assinado
