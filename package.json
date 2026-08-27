@@ -1,0 +1,9 @@
+{
+  "name": "cnj-info-extractor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/node/*.test.js",
+    "check": "node --check api/datajud.js && node --check api/session.js && node --check server/auth.js && node --check server/origin.js && node --check server/rate-limit.js && node --check js/tables.js && node --check js/cnj.js && node --check js/api.js && node --check js/app.js"
+  }
+}

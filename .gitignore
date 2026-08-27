@@ -13,6 +13,10 @@ node_modules/
 
 # Vercel
 .vercel
-
-.vercel
 .env*
+
+# ...mas o exemplo, sem valores, é versionado.
+!.env.example
+
+# Agent execution state
+.superpowers/

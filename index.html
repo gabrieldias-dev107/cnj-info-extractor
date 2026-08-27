@@ -11,6 +11,7 @@
   <main class="container">
     <header>
       <h1>Decodificador de Número CNJ</h1>
+      <button id="session-logout" class="btn-secundario logout" type="button" hidden>Sair da consulta online</button>
       <p class="subtitulo">
         Cole um número único de processo (Resolução CNJ nº 65/2008) e veja o que ele
         revela: segmento da Justiça, tribunal, ano, unidade de origem e se o dígito
@@ -63,6 +64,20 @@
       <p>Decodificação local (Resolução CNJ nº 65/2008). Consulta online opcional via API Pública do DataJud (CNJ); a API pública não retorna partes nem advogados.</p>
     </footer>
   </main>
+
+  <dialog id="login-dialog" aria-labelledby="login-titulo" aria-describedby="login-descricao">
+    <form id="login-form">
+      <h2 id="login-titulo">Acesso à consulta online</h2>
+      <p id="login-descricao">Digite a senha compartilhada da equipe. A decodificação offline continua pública.</p>
+      <label for="login-password">Senha</label>
+      <input id="login-password" name="senha" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="login-error" role="alert"></p>
+      <div class="dialog-acoes">
+        <button id="login-cancel" class="btn-secundario" type="button">Cancelar</button>
+        <button id="login-submit" class="btn-consultar" type="submit">Entrar</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> app -->
   <script src="js/tables.js"></script>

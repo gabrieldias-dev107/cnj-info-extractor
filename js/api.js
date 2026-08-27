@@ -1,11 +1,16 @@
 // Cliente da consulta online (DataJud) via proxy /api/datajud.
 // Script clássico. Depende de window.CNJ_TABLES (deriveAlias).
 // Expõe window.CNJApi.consultarProcesso(digitos) -> Promise<resposta>.
+//
+// Contrato da resposta: { encontrado, total, processos: [...] }.
+// O mesmo número pode existir em mais de um grau — por isso é lista, não item.
 (function (global) {
   "use strict";
   var T = global.CNJ_TABLES;
 
-  var CACHE_PREFIX = "datajud:";
+  // v2: o formato mudou de { processo } para { processos }. Trocar o prefixo
+  // descarta as entradas antigas sem precisar de código de migração.
+  var CACHE_PREFIX = "datajud:v2:";
   var TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
   function lerCache(digitos) {
@@ -29,11 +34,49 @@
     } catch (e) { /* best-effort */ }
   }
 
+  async function requisicaoSessao(method, body) {
+    var opcoes = { method: method, credentials: "same-origin" };
+    if (body) {
+      opcoes.headers = { "Content-Type": "application/json" };
+      opcoes.body = JSON.stringify(body);
+    }
+    var resp = await fetch("/api/session", opcoes);
+    if (resp.ok) return true;
+    var retorno;
+    try { retorno = await resp.json(); } catch (e) { retorno = {}; }
+    throw new Error((retorno && retorno.error) || "erro_servidor");
+  }
+
+  function verificarSessao() {
+    return requisicaoSessao("GET");
+  }
+
+  function entrar(senha) {
+    return requisicaoSessao("POST", { senha: senha });
+  }
+
+  function limparCache() {
+    try {
+      for (var i = global.localStorage.length - 1; i >= 0; i--) {
+        var chave = global.localStorage.key(i);
+        if (chave && chave.indexOf(CACHE_PREFIX) === 0) global.localStorage.removeItem(chave);
+      }
+    } catch (e) { /* best-effort */ }
+  }
+
+  async function sair() {
+    try { await requisicaoSessao("DELETE"); }
+    finally { limparCache(); }
+  }
+
   // Resolve os metadados do processo. Lança Error(codigo) em falha,
   // onde codigo é tratado pelo app.js para mensagem em PT-BR.
   async function consultarProcesso(digitos) {
     var d = String(digitos).replace(/\D/g, "");
     if (d.length !== 20) throw new Error("numero_invalido");
+
+    // Cache online também é protegido: confirmar sessão antes de expor dados.
+    await verificarSessao();
 
     var emCache = lerCache(d);
     if (emCache) {
@@ -46,6 +89,7 @@
 
     var resp = await fetch("/api/datajud", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ numero: d, alias: derivado.alias }),
     });
@@ -59,5 +103,10 @@
     return body;
   }
 
-  global.CNJApi = { consultarProcesso: consultarProcesso };
+  global.CNJApi = {
+    consultarProcesso: consultarProcesso,
+    verificarSessao: verificarSessao,
+    entrar: entrar,
+    sair: sair,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

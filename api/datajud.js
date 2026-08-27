@@ -2,19 +2,71 @@
 // Existe para resolver CORS (a API exige header Authorization, que o browser
 // não consegue enviar cross-origin) e para centralizar a chave pública.
 // Rota automática: /api/datajud. Runtime Node (fetch global no Node 18+).
+//
+// A consulta online exige sessão; o decodificador estático permanece público.
+
+import { sessaoValida } from "../server/auth.js";
+import { origemPermitida } from "../server/origin.js";
+import { consumirDatajud } from "../server/rate-limit.js";
 
 var BASE = "https://api-publica.datajud.cnj.jus.br";
-var ALIAS_RE = /^api_publica_[a-z0-9-]+$/;
+var ALIAS_RE = /^api_publica_[a-z0-9-]{1,52}$/;
 var TIMEOUT_MS = 12000;
+var MAX_HITS = 20;
 
-// Chave pública vigente do DataJud. Pode ser rotacionada pelo CNJ a qualquer
-// momento; nesse caso basta definir a env var DATAJUD_API_KEY no Vercel.
-var FALLBACK_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==";
+// --- observabilidade ---------------------------------------------------------
 
+// Uma linha JSON por evento, para que a busca no log da Vercel seja por campo
+// e não por substring. O número do processo NÃO é logado inteiro: dado
+// processual vincula-se a pessoa identificável e não há ainda política de
+// retenção definida. Os 4 últimos dígitos bastam para correlacionar.
+function log(nivel, evento, campos) {
+  var linha = Object.assign({ ts: new Date().toISOString(), nivel: nivel, evento: evento }, campos || {});
+  var texto = JSON.stringify(linha);
+  if (nivel === "error") console.error(texto);
+  else console.log(texto);
+}
+
+function sufixo(digitos) {
+  return digitos ? "…" + String(digitos).slice(-4) : null;
+}
+
+// Erro com código da taxonomia; o handler traduz código -> status HTTP.
+function falha(codigo, extra) {
+  var e = new Error(codigo);
+  e.codigo = codigo;
+  e.extra = extra || {};
+  return e;
+}
+
+var STATUS_POR_CODIGO = {
+  config_ausente: 500,
+  autenticacao_necessaria: 401,
+  origem_nao_permitida: 403,
+  limite_excedido: 429,
+  metodo_nao_permitido: 405,
+  numero_invalido: 400,
+  alias_invalido: 400,
+  alias_inexistente: 502,
+  cota_excedida: 502,
+  tribunal_indisponivel: 502,
+  timeout: 504,
+  rede_indisponivel: 504,
+  erro_interno: 500,
+};
+
+// --- configuração ------------------------------------------------------------
+
+// Sem fallback embutido: a chave é rotacionada pelo CNJ e uma cópia versionada
+// no repositório sempre acaba desatualizada e exposta. Ausência é erro de
+// configuração explícito, não silenciosamente um 504 que parece falha do CNJ.
 function authHeader() {
   var k = process.env.DATAJUD_API_KEY;
-  return "APIKey " + (k && k.trim() ? k.trim() : FALLBACK_KEY);
+  if (!k || !k.trim()) throw falha("config_ausente", { variavel: "DATAJUD_API_KEY" });
+  return "APIKey " + k.trim();
 }
+
+// --- normalização do retorno -------------------------------------------------
 
 // Reduz o _source do DataJud ao essencial para o front e ordena os movimentos
 // do mais recente para o mais antigo (dataHora é ISO 8601, ordena como string).
@@ -38,65 +90,138 @@ function normalizar(s) {
   };
 }
 
+// O mesmo número existe em mais de um grau (originário e recurso) e em índices
+// distintos. Devolver só o primeiro hit omitia justamente a instância mais
+// recente, que é o que a triagem precisa saber.
+var RANK_GRAU = { G1: 1, JE: 2, G2: 3, TR: 4, SUP: 5 };
+
+export function ordenarInstancias(lista) {
+  return lista.slice().sort(function (a, b) {
+    var ra = RANK_GRAU[String(a.grau || "").toUpperCase()] || 99;
+    var rb = RANK_GRAU[String(b.grau || "").toUpperCase()] || 99;
+    if (ra !== rb) return ra - rb;
+    // Mesmo grau: mais recentemente atualizado primeiro.
+    return String(b.dataHoraUltimaAtualizacao || "")
+      .localeCompare(String(a.dataHoraUltimaAtualizacao || ""));
+  });
+}
+
+// --- handler -----------------------------------------------------------------
+
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "metodo_nao_permitido" });
-    return;
-  }
+  var inicio = Date.now();
+  var reqId = req.headers["x-vercel-id"] || null;
+  var alias = "";
+  var digitos = "";
 
-  var body = req.body;
-  if (typeof body === "string") {
-    try { body = JSON.parse(body); } catch (e) { body = {}; }
-  }
-  body = body || {};
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Cache-Control", "private, no-store");
 
-  var digitos = String(body.numero || "").replace(/\D/g, "");
-  var alias = String(body.alias || "");
-
-  if (digitos.length !== 20) {
-    res.status(400).json({ error: "numero_invalido" });
-    return;
+  function responderErro(codigo, extra) {
+    var status = STATUS_POR_CODIGO[codigo] || 500;
+    log(status >= 500 ? "error" : "warn", codigo, Object.assign({
+      reqId: reqId,
+      alias: alias || null,
+      numero: sufixo(digitos),
+      status: status,
+      duracaoMs: Date.now() - inicio,
+    }, extra || {}));
+    if (extra && extra.retryAfter) res.setHeader("Retry-After", String(extra.retryAfter));
+    res.status(status).json({ error: codigo });
   }
-  if (!ALIAS_RE.test(alias)) {
-    res.status(400).json({ error: "alias_invalido" });
-    return;
-  }
-
-  var controller = new AbortController();
-  var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
 
   try {
-    var r = await fetch(BASE + "/" + alias + "/_search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authHeader(),
-      },
-      body: JSON.stringify({ query: { match: { numeroProcesso: digitos } } }),
-      signal: controller.signal,
-    });
+    if (req.method !== "POST") return responderErro("metodo_nao_permitido", { metodo: req.method });
+
+    if (!origemPermitida(req)) {
+      return responderErro("origem_nao_permitida", { origin: req.headers.origin || null });
+    }
+
+    if (!sessaoValida(req)) return responderErro("autenticacao_necessaria");
+
+    var body = req.body;
+    if (typeof body === "string") {
+      try { body = JSON.parse(body); } catch (e) { body = {}; }
+    }
+    body = body || {};
+
+    digitos = String(body.numero || "").replace(/\D/g, "");
+    alias = String(body.alias || "");
+
+    if (digitos.length !== 20) return responderErro("numero_invalido");
+    if (!ALIAS_RE.test(alias)) return responderErro("alias_invalido");
+
+    var auth = authHeader(); // lança config_ausente antes de qualquer rede
+
+    var limite = await consumirDatajud(req, Date.now());
+    if (!limite.permitido) {
+      return responderErro("limite_excedido", {
+        escopo: limite.escopo, limite: limite.limite, retryAfter: limite.retryAfter,
+      });
+    }
+    if (limite.indisponivel) {
+      // Fail-open: registrado para que a lacuna de proteção fique visível no log.
+      log("warn", "rate_limit_indisponivel", { reqId: reqId, motivo: limite.motivo });
+    }
+
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
+
+    var r;
+    try {
+      r = await fetch(BASE + "/" + alias + "/_search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({ size: MAX_HITS, query: { match: { numeroProcesso: digitos } } }),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Distinguir aborto de falha de rede; nenhum dos dois é bug nosso.
+      if (e && e.name === "AbortError") throw falha("timeout", { timeoutMs: TIMEOUT_MS });
+      throw falha("rede_indisponivel", { causa: (e && e.message) || String(e) });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!r.ok) {
-      res.status(502).json({ error: "datajud_http", status: r.status });
-      return;
+      // Taxonomia por status: alias inexistente, cota do CNJ e indisponibilidade
+      // do tribunal exigem mensagens diferentes na interface.
+      if (r.status === 404) throw falha("alias_inexistente", { statusDatajud: 404 });
+      if (r.status === 429) throw falha("cota_excedida", { statusDatajud: 429 });
+      if (r.status >= 500) throw falha("tribunal_indisponivel", { statusDatajud: r.status });
+      throw falha("erro_interno", { statusDatajud: r.status });
     }
 
     var data = await r.json();
-    var hit = data && data.hits && data.hits.hits && data.hits.hits[0] && data.hits.hits[0]._source;
+    var hits = (data && data.hits && data.hits.hits) || [];
+    var processos = ordenarInstancias(
+      hits.map(function (h) { return h && h._source; }).filter(Boolean).map(normalizar)
+    );
 
-    if (!hit) {
-      res.status(200).json({ encontrado: false });
+    if (!processos.length) {
+      // Índice vazio não é erro, mas precisa ser mensurável: é o insumo do
+      // futuro painel de cobertura por tribunal.
+      log("info", "indice_vazio", {
+        reqId: reqId, alias: alias, numero: sufixo(digitos), duracaoMs: Date.now() - inicio,
+      });
+      res.status(200).json({ encontrado: false, total: 0, processos: [] });
       return;
     }
 
-    res.status(200).json({ encontrado: true, processo: normalizar(hit) });
+    log("info", "consulta_ok", {
+      reqId: reqId,
+      alias: alias,
+      numero: sufixo(digitos),
+      total: processos.length,
+      truncado: hits.length >= MAX_HITS,
+      duracaoMs: Date.now() - inicio,
+    });
+
+    res.status(200).json({ encontrado: true, total: processos.length, processos: processos });
   } catch (e) {
-    if (e && e.name === "AbortError") {
-      res.status(504).json({ error: "timeout" });
-    } else {
-      res.status(504).json({ error: "network" });
-    }
-  } finally {
-    clearTimeout(timer);
+    if (e && e.codigo) return responderErro(e.codigo, e.extra);
+    // Sem código na taxonomia = bug nosso. Antes isto virava 504 e ficava
+    // indistinguível de falha do DataJud.
+    return responderErro("erro_interno", { causa: (e && e.message) || String(e) });
   }
 }

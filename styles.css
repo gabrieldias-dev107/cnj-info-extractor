@@ -188,9 +188,39 @@ header h1 {
   background: var(--brand);
   color: #fff;
   transition: background .15s ease, opacity .15s ease;
+  min-height: 44px;
 }
 .btn-consultar:hover { background: var(--brand-ink); }
 .btn-consultar:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn-secundario {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: .6rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--brand-ink);
+  min-height: 44px;
+}
+.btn-secundario:hover { border-color: var(--brand); }
+.logout { margin-top: .5rem; }
+
+dialog {
+  width: min(28rem, calc(100% - 2rem));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  color: var(--ink);
+  background: var(--surface);
+}
+dialog::backdrop { background: rgba(15, 31, 49, .62); }
+dialog h2 { margin-top: 0; color: var(--brand-ink); }
+dialog label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
+dialog input { width: 100%; min-height: 44px; box-sizing: border-box; padding: .65rem; font: inherit; }
+.dialog-acoes { display: flex; justify-content: flex-end; gap: .75rem; margin-top: 1rem; }
+.login-error { min-height: 1.25rem; color: var(--erro); margin: .5rem 0 0; }
 
 .consulta-nota { font-size: .85rem; color: var(--muted); }
 
@@ -230,6 +260,9 @@ header h1 {
   animation: girar .7s linear infinite;
 }
 @keyframes girar { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
 
 .timeline {
   list-style: none;
@@ -311,4 +344,30 @@ footer {
 @media (max-width: 520px) {
   dl { grid-template-columns: 1fr; gap: .1rem 0; }
   dt { margin-top: .6rem; }
+}
+
+/* ---- Seletor de instância (o mesmo número pode existir em mais de um grau) ---- */
+.instancias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+
+.instancia-btn {
+  font: inherit;
+  font-size: .85rem;
+  cursor: pointer;
+  padding: .35rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand);
+  transition: background .15s ease, border-color .15s ease;
+}
+.instancia-btn:hover { background: #eef3fb; border-color: var(--brand); }
+.instancia-btn[aria-selected="true"] {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
 }
