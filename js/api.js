@@ -102,7 +102,12 @@
     var body;
     try { body = await resp.json(); } catch (e) { body = {}; }
 
-    if (!resp.ok) throw new Error((body && body.error) || "erro_servidor");
+    // A sessão pode ter expirado entre o verificarSessao() acima e esta
+    // resposta; sem isto o erro cru caía no diálogo de senha compartilhada.
+    if (!resp.ok) {
+      if (body && body.login === "sso") throw new Error("autenticacao_sso");
+      throw new Error((body && body.error) || "erro_servidor");
+    }
 
     gravarCache(d, body);
     return body;
