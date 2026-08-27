@@ -388,3 +388,42 @@ footer {
   border-color: var(--brand);
   color: #fff;
 }
+
+/* ---- Estágio TPU e triagem por linha ---- */
+.estagio {
+  margin: 0 0 1rem;
+  font-size: .9rem;
+  color: var(--muted);
+}
+.estagio-rotulo { font-weight: 600; color: var(--brand-ink); }
+
+/* A tabela rola dentro do próprio bloco: lotes de 500 linhas não podem
+   empurrar a largura da página. */
+.batch-itens {
+  margin-top: 1rem;
+  max-height: 22rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tabela-lote {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .85rem;
+}
+.tabela-lote th,
+.tabela-lote td {
+  padding: .45rem .7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.tabela-lote th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+.tabela-lote tr:last-child td { border-bottom: none; }
+.tabela-lote .numero-lote { font-variant-numeric: tabular-nums; white-space: nowrap; }

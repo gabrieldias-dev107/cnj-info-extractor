@@ -14,6 +14,13 @@ export function configuracaoSso() {
   };
 }
 
+// Domínio de e-mail aceito no login. Configurável para não prender o código a
+// um tenant; o padrão preserva o comportamento anterior.
+export function dominioPermitido() {
+  const configurado = valor("SSO_EMAIL_DOMINIO").toLowerCase().replace(/^@/, "");
+  return "@" + (configurado || "btblue.com.br");
+}
+
 export function segredoSessaoSso() {
   const segredo = valor("SESSION_SECRET");
   return segredo.length >= 32 ? segredo : "";

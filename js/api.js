@@ -132,11 +132,15 @@
     return requisicaoLote("/api/batches?id=" + encodeURIComponent(id), "GET");
   }
 
-  async function importarXlsx(arquivo) {
+  var TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+  // O servidor decide o parser pelo Content-Type, então o cliente precisa
+  // declará-lo. Nome de arquivo não é usado como formato em lugar nenhum.
+  async function importarPlanilha(arquivo, tipo) {
     var resp = await fetch("/api/batches/import", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      headers: { "Content-Type": tipo },
       body: arquivo,
     });
     var body;
@@ -148,6 +152,14 @@
     return body;
   }
 
+  function importarXlsx(arquivo) {
+    return importarPlanilha(arquivo, TIPO_XLSX);
+  }
+
+  function importarCsv(arquivo) {
+    return importarPlanilha(arquivo, "text/csv");
+  }
+
   global.CNJApi = {
     consultarProcesso: consultarProcesso,
     verificarSessao: verificarSessao,
@@ -157,5 +169,6 @@
     criarLote: criarLote,
     consultarLote: consultarLote,
     importarXlsx: importarXlsx,
+    importarCsv: importarCsv,
   };
 })(typeof window !== "undefined" ? window : globalThis);

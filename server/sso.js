@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import { createSession, deleteSession, userForSession, upsertUser } from "./db.js";
-import { configuracaoSso, segredoSessaoSso, ssoConfigurado } from "./sso-config.js";
+import { configuracaoSso, dominioPermitido, segredoSessaoSso, ssoConfigurado } from "./sso-config.js";
 
 export const COOKIE_SESSAO_SSO = "cnj_sso";
 const DURACAO_S = 8 * 60 * 60;
@@ -23,7 +23,7 @@ export async function finishLogin(req, { code, state }) {
   const values = lerStateCookie(req);
   if (!code || !state || values.state !== state || values.exp < Date.now()) throw new Error("autenticacao_invalida");
   const cfg = config(req); const app = new ConfidentialClientApplication({ auth: cfg.auth }); const result = await app.acquireTokenByCode({ code, scopes: ["openid", "profile", "email"], redirectUri: cfg.redirectUri, codeVerifier: values.verifier }); const claims = result.idTokenClaims || {}; const email = String(claims.preferred_username || claims.email || "").toLowerCase();
-  if (String(claims.tid || "") !== cfg.tenantId || !email.endsWith("@btblue.com.br") || !claims.oid) throw new Error("acesso_nao_permitido");
+  if (String(claims.tid || "") !== cfg.tenantId || !email.endsWith(dominioPermitido()) || !claims.oid) throw new Error("acesso_nao_permitido");
   const user = await upsertUser({ oid: String(claims.oid), email }); const token = randomBytes(32).toString("base64url"); await createSession(user.id, token, new Date(Date.now() + DURACAO_S * 1000)); return { user, cookie: COOKIE_SESSAO_SSO + "=" + token + "; " + attrs(req, DURACAO_S) };
 }
 export async function currentUser(req) { return userForSession(cookies(req)[COOKIE_SESSAO_SSO]); }

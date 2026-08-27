@@ -13,7 +13,7 @@
 
   var input, resultado, resultadoOnline, contador;
   var loginDialog, loginForm, loginPassword, loginError, loginSubmit, logoutButton;
-  var batchForm, batchNumbers, batchFile, batchSubmit, batchStatus, batchExport, batchExportXlsx, batchTimer;
+  var batchForm, batchNumbers, batchFile, batchSubmit, batchStatus, batchItens, batchExport, batchExportXlsx, batchTimer;
   var consultaPendente = null;
   var focoAnterior = null;
   var consultaSeq = 0;
@@ -150,7 +150,7 @@
         setOnlineEstado("vazio", "Processo não encontrado na base pública do DataJud.");
         return;
       }
-      renderOnline(r.processos, !!r._cache);
+      renderOnline(r.processos, !!r._cache, r.estagio);
     } catch (e) {
       if (idConsulta !== consultaSeq) return;
       if (e && e.message === "autenticacao_necessaria") {
@@ -220,6 +220,25 @@
         return "Consulta indisponível: falta configuração no servidor. Avise o time responsável.";
       case "timeout":
         return "A consulta demorou demais. Tente novamente.";
+      case "xlsx_invalido":
+        return "Arquivo XLSX inválido ou ilegível.";
+      case "csv_invalido":
+        return "Arquivo CSV inválido ou vazio.";
+      case "formato_nao_suportado":
+        return "Formato não suportado. Envie um arquivo CSV ou XLSX.";
+      case "arquivo_maior_que_2mb":
+        return "Arquivo acima de 2 MiB.";
+      case "lote_vazio":
+        return "Nenhum número encontrado no arquivo.";
+      case "lote_maior_que_500":
+        return "O limite é de 500 números por lote.";
+      case "lote_invalido":
+        return "Não foi possível ler os números enviados.";
+      case "lote_nao_encontrado":
+        return "Lote não encontrado ou expirado.";
+      case "lote_indisponivel":
+      case "fila_indisponivel":
+        return "A triagem em lote está indisponível agora. Tente novamente em instantes.";
       case "rede_indisponivel":
       case "erro_interno":
       case "erro_servidor":
@@ -240,7 +259,44 @@
 
   // O mesmo número pode existir em mais de um grau. Mostrar só o primeiro hit
   // omitia silenciosamente a instância mais recente — que é a que interessa.
-  function renderOnline(processos, fromCache) {
+  // Rótulos da classificação TPU. Só códigos curados entram no mapa do
+  // servidor (server/p0-core.js); tudo que não estiver lá chega aqui como
+  // "nao_classificado", que é hoje o caso comum e precisa ficar explícito.
+  var ROTULO_ESTAGIO = {
+    expedicao_alvara: "Expedição de alvará",
+    penhora: "Penhora",
+    execucao: "Execução",
+    nao_classificado: "Não classificado",
+  };
+
+  function rotuloEstagio(nome) {
+    return ROTULO_ESTAGIO[nome] || "Não classificado";
+  }
+
+  function dataLegivel(iso) {
+    var data = new Date(iso);
+    return isNaN(data.getTime()) ? String(iso) : data.toLocaleDateString("pt-BR");
+  }
+
+  function blocoEstagio(estagio) {
+    var bloco = el("p", "estagio");
+    var classificado = estagio.estagio && estagio.estagio !== "nao_classificado";
+    bloco.appendChild(el("span", "estagio-rotulo", "Estágio (TPU): "));
+    bloco.appendChild(badge(rotuloEstagio(estagio.estagio), classificado ? "ok" : "warn"));
+    if (!classificado) {
+      bloco.appendChild(doc.createTextNode(" Nenhum movimento com código TPU curado foi encontrado."));
+      return bloco;
+    }
+    var detalhes = ["código " + estagio.codigo];
+    if (estagio.data) detalhes.push("em " + dataLegivel(estagio.data));
+    if (estagio.idadeDias !== null && estagio.idadeDias !== undefined) {
+      detalhes.push("há " + estagio.idadeDias + (estagio.idadeDias === 1 ? " dia" : " dias"));
+    }
+    bloco.appendChild(doc.createTextNode(" " + detalhes.join(", ") + "."));
+    return bloco;
+  }
+
+  function renderOnline(processos, fromCache, estagio) {
     limpar(resultadoOnline);
     resultadoOnline.className = "resultado-online ok";
 
@@ -254,6 +310,7 @@
       titulo.appendChild(badge("dados em cache", "warn"));
     }
     resultadoOnline.appendChild(titulo);
+    if (estagio) resultadoOnline.appendChild(blocoEstagio(estagio));
 
     var corpo = el("div", "instancia-corpo");
 
@@ -461,10 +518,52 @@
     return finalizados + "/" + lote.total + " linhas finalizadas" + (contagens.falhou ? "; " + contagens.falhou + " falharam." : ".");
   }
 
+  var ROTULO_STATUS_ITEM = {
+    pendente: "Na fila",
+    processando: "Consultando",
+    concluido: "Concluído",
+    invalido: "Número inválido",
+    duplicado: "Duplicado",
+    falhou: "Falhou",
+  };
+
+  // Tabela montada com createElement/textContent: nada de innerHTML, já que
+  // numero e erro vêm de dados externos. Ver tests/node/ui-security.test.js.
+  function renderItensLote(itens) {
+    limpar(batchItens);
+    if (!itens || !itens.length) {
+      batchItens.hidden = true;
+      return;
+    }
+    var tabela = el("table", "tabela-lote");
+    var cabecalho = el("tr");
+    ["Linha", "Número", "Situação", "Estágio (TPU)"].forEach(function (texto) {
+      var th = el("th", null, texto);
+      th.scope = "col";
+      cabecalho.appendChild(th);
+    });
+    tabela.appendChild(el("thead")).appendChild(cabecalho);
+
+    var corpo = el("tbody");
+    itens.forEach(function (item) {
+      var linha = el("tr");
+      linha.appendChild(el("td", null, item.linha));
+      linha.appendChild(el("td", "numero-lote", item.numero));
+      var situacao = ROTULO_STATUS_ITEM[item.status] || item.status;
+      linha.appendChild(el("td", null, item.erro ? situacao + " — " + item.erro : situacao));
+      linha.appendChild(el("td", null, item.status === "concluido" ? rotuloEstagio(item.estagio) : "—"));
+      corpo.appendChild(linha);
+    });
+    tabela.appendChild(corpo);
+    batchItens.appendChild(tabela);
+    batchItens.hidden = false;
+  }
+
   async function atualizarLote(id) {
     try {
       var lote = await Api.consultarLote(id);
       batchStatus.textContent = textoProgresso(lote);
+      renderItensLote(lote.itens);
       if (!["pendente", "processando"].includes(lote.status) && batchTimer) {
         global.clearInterval(batchTimer);
         batchTimer = null;
@@ -485,6 +584,8 @@
     evento.preventDefault();
     batchStatus.textContent = "";
     batchSubmit.disabled = true;
+    limpar(batchItens);
+    batchItens.hidden = true;
     batchExport.hidden = true;
     batchExportXlsx.hidden = true;
     try {
@@ -508,14 +609,13 @@
     var arquivo = batchFile.files && batchFile.files[0];
     if (!arquivo) return;
     batchStatus.textContent = "";
+    limpar(batchItens);
+    batchItens.hidden = true;
     batchExport.hidden = true;
     batchExportXlsx.hidden = true;
     try {
-      if (/\.xlsx$/i.test(arquivo.name || "")) await acompanharNovoLote(await Api.importarXlsx(arquivo));
-      else {
-        batchNumbers.value = await arquivo.text();
-        batchStatus.textContent = "CSV carregado. Revise e inicie a triagem.";
-      }
+      var xlsx = /\.xlsx$/i.test(arquivo.name || "");
+      await acompanharNovoLote(xlsx ? await Api.importarXlsx(arquivo) : await Api.importarCsv(arquivo));
     } catch (e) {
       if (e && e.message === "autenticacao_sso") Api.iniciarSso();
       else batchStatus.textContent = mensagemErro(e && e.message);
@@ -540,6 +640,7 @@
     batchFile = doc.getElementById("batch-file");
     batchSubmit = doc.getElementById("batch-submit");
     batchStatus = doc.getElementById("batch-status");
+    batchItens = doc.getElementById("batch-itens");
     batchExport = doc.getElementById("batch-export");
     batchExportXlsx = doc.getElementById("batch-export-xlsx");
 

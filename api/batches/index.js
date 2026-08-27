@@ -2,7 +2,7 @@ import { currentUser } from "../../server/sso.js";
 import { ssoConfigurado } from "../../server/sso-config.js";
 import { origemPermitida } from "../../server/origin.js";
 import { prepararLote } from "../../server/batch-service.js";
-import { batchForUser, createBatch, finishBatchItem } from "../../server/db.js";
+import { batchForUser, batchItemsForUser, createBatch, finishBatchItem } from "../../server/db.js";
 import { publishBatchItem } from "../../server/queue.js";
 
 export const config = { api: { bodyParser: { sizeLimit: "2mb" } } };
@@ -26,7 +26,11 @@ export default async function handler(req, res) {
     const id = String((req.query || {}).id || "");
     if (!id) return erro(res, 400, "lote_invalido");
     const lote = await batchForUser(id, user.id);
-    return lote ? res.status(200).json(lote) : erro(res, 404, "lote_nao_encontrado");
+    if (!lote) return erro(res, 404, "lote_nao_encontrado");
+    // A triagem por linha (com o estágio TPU) é o resultado que interessa;
+    // sem ela o painel só mostrava um contador agregado.
+    const itens = await batchItemsForUser(id, user.id);
+    return res.status(200).json(Object.assign({}, lote, { itens }));
   }
   if (req.method !== "POST") return erro(res, 405, "metodo_nao_permitido");
 
