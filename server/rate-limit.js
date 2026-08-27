@@ -33,19 +33,19 @@ async function incrementar(url, token, chaves) {
   });
   var controller = new AbortController();
   var timer = setTimeout(function () { controller.abort(); }, num(process.env.RL_REDIS_TIMEOUT_MS, 3000));
-  var resposta;
+  var itens;
   try {
-    resposta = await fetch(url.replace(/\/+$/, "") + "/pipeline", {
+    var resposta = await fetch(url.replace(/\/+$/, "") + "/pipeline", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify(comandos),
       signal: controller.signal,
     });
+    if (!resposta.ok) throw new Error("upstash_http_" + resposta.status);
+    itens = await resposta.json();
   } finally {
     clearTimeout(timer);
   }
-  if (!resposta.ok) throw new Error("upstash_http_" + resposta.status);
-  var itens = await resposta.json();
   if (!Array.isArray(itens) || itens.length !== comandos.length) throw new Error("upstash_resposta_invalida");
   itens.forEach(function (item) {
     if (!item || item.error || !("result" in item)) throw new Error("upstash_comando_falhou");

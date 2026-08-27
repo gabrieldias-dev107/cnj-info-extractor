@@ -250,10 +250,10 @@
     resultadoOnline.appendChild(titulo);
 
     var corpo = el("div", "instancia-corpo");
-    corpo.id = "instancia-painel";
-    corpo.setAttribute("role", "tabpanel");
 
     if (processos.length > 1) {
+      corpo.id = "instancia-painel";
+      corpo.setAttribute("role", "tabpanel");
       var abas = el("div", "instancias");
       abas.setAttribute("role", "tablist");
       abas.setAttribute("aria-label", "Instâncias encontradas");

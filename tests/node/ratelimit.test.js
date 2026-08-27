@@ -116,3 +116,26 @@ test("timeout Redis não deixa login pendurado", async () => {
     delete process.env.RL_REDIS_TIMEOUT_MS;
   }
 });
+
+test("timeout Redis também cobre leitura do corpo", async () => {
+  ambiente({ UPSTASH_REDIS_REST_URL: "https://redis.test", UPSTASH_REDIS_REST_TOKEN: "token", RL_REDIS_TIMEOUT_MS: 5 });
+  const anteriorFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => ({
+    ok: true,
+    json: async () => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(Object.assign(new Error("abortado"), { name: "AbortError" })));
+    }),
+  });
+  try {
+    const resultado = await Promise.race([
+      consumirLogin({ headers: {} }, 0),
+      new Promise((resolve) => setTimeout(() => resolve({ pendente: true }), 30)),
+    ]);
+    assert.equal(resultado.pendente, undefined);
+    assert.equal(resultado.permitido, false);
+    assert.equal(resultado.indisponivel, true);
+  } finally {
+    globalThis.fetch = anteriorFetch;
+    delete process.env.RL_REDIS_TIMEOUT_MS;
+  }
+});
