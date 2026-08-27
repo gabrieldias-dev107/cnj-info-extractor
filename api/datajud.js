@@ -10,6 +10,7 @@ import { origemPermitida } from "../server/origin.js";
 import { consumirDatajud } from "../server/rate-limit.js";
 import { currentUser } from "../server/sso.js";
 import { freshSnapshot, persistSnapshot, recordConsultation } from "../server/db.js";
+import { validarNumeroParaConsulta } from "../server/cnj-validation.js";
 import { ssoConfigurado } from "../server/sso-config.js";
 
 var BASE = "https://api-publica.datajud.cnj.jus.br";
@@ -130,7 +131,11 @@ export default async function handler(req, res) {
       duracaoMs: Date.now() - inicio,
     }, extra || {}));
     if (extra && extra.retryAfter) res.setHeader("Retry-After", String(extra.retryAfter));
-    res.status(status).json({ error: codigo });
+    var corpo = { error: codigo };
+    // Mesmo contrato das rotas irmãs: sem esta dica o cliente cai no diálogo de
+    // senha compartilhada em vez de ser mandado ao Entra.
+    if (codigo === "autenticacao_necessaria" && ssoConfigurado()) corpo.login = "sso";
+    res.status(status).json(corpo);
   }
 
   try {
@@ -152,16 +157,26 @@ export default async function handler(req, res) {
     body = body || {};
 
     digitos = String(body.numero || "").replace(/\D/g, "");
-    alias = String(body.alias || "");
 
-    if (digitos.length !== 20) return responderErro("numero_invalido");
-    if (!ALIAS_RE.test(alias)) return responderErro("alias_invalido");
+    // O alias é DERIVADO do número, nunca aceito do cliente: quem escolhe o
+    // índice do DataJud é o servidor. Um alias no corpo só é tolerado se bater
+    // com o derivado — divergência é erro do cliente e precisa aparecer.
+    var validacao = validarNumeroParaConsulta(digitos);
+    if (!validacao.valido) {
+      return responderErro(validacao.erro === "alias_desconhecido" ? "alias_invalido" : "numero_invalido");
+    }
+    alias = validacao.alias;
+
+    var aliasCliente = String(body.alias || "");
+    if (aliasCliente && (!ALIAS_RE.test(aliasCliente) || aliasCliente !== alias)) {
+      return responderErro("alias_invalido", { aliasRecebido: aliasCliente });
+    }
 
     if (ssoConfigurado()) {
       var emCache = await freshSnapshot(digitos);
       if (emCache) {
         log("info", "consulta_cache", { reqId: reqId, alias: alias, numero: sufixo(digitos) });
-        return res.status(200).json(Object.assign({}, emCache, { cache: "servidor" }));
+        return res.status(200).json(Object.assign({}, emCache.dados, { cache: "servidor", estagio: emCache.estagio }));
       }
     }
 
