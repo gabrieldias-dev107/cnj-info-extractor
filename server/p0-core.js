@@ -19,6 +19,13 @@ export function ttlPorEstagio(estagio) {
   return TTL_POR_ESTAGIO[estagio] || 7 * 24 * 60 * 60 * 1000;
 }
 
+// Extraída para que a resposta vinda do cache monte o mesmo objeto que a
+// resposta fresca: `idadeDias` é derivado, não coluna do snapshot.
+export function idadeEmDias(data, agora = new Date().toISOString()) {
+  const diferenca = Date.parse(agora) - Date.parse(String(data || ""));
+  return Number.isFinite(diferenca) ? Math.max(0, Math.floor(diferenca / 86400000)) : null;
+}
+
 export function classificarEstagio(movimentos, agora = new Date().toISOString()) {
   const relevantes = (Array.isArray(movimentos) ? movimentos : [])
     .filter((movimento) => ESTAGIO_POR_CODIGO.has(Number(movimento && movimento.codigo)))
@@ -27,12 +34,11 @@ export function classificarEstagio(movimentos, agora = new Date().toISOString())
   if (!movimento) return { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: VERSAO_TPU };
 
   const data = String(movimento.dataHora || "");
-  const diferenca = Date.parse(agora) - Date.parse(data);
   return {
     estagio: ESTAGIO_POR_CODIGO.get(Number(movimento.codigo)),
     codigo: Number(movimento.codigo),
     data,
-    idadeDias: Number.isFinite(diferenca) ? Math.max(0, Math.floor(diferenca / 86400000)) : null,
+    idadeDias: idadeEmDias(data, agora),
     versao: VERSAO_TPU,
   };
 }

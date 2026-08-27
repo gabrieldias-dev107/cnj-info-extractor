@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { classificarEstagio, ttlPorEstagio } from "./p0-core.js";
+import { classificarEstagio, idadeEmDias, ttlPorEstagio } from "./p0-core.js";
 
 function sql() {
   const url = String(process.env.DATABASE_URL || "");
@@ -37,12 +37,29 @@ export async function deleteSession(token) {
   await sql().query("DELETE FROM sessions WHERE token_hash=$1", [hashToken(token)]);
 }
 
+// Devolve o snapshot inteiro, não só `dados`: a classificação TPU mora nas
+// colunas `estagio*` e ficava de fora da resposta de cache, e o id é o que
+// permite ao worker de lote reaproveitar o snapshot em vez de reconsultar.
 export async function freshSnapshot(numero) {
   const rows = await sql().query(
-    "SELECT s.dados FROM snapshots s JOIN processes p ON p.id=s.process_id WHERE p.numero=$1 AND s.expira_em > now() ORDER BY s.consultado_em DESC LIMIT 1",
+    "SELECT s.id,s.process_id,s.dados,s.estagio,s.estagio_codigo,s.estagio_data,s.tpu_versao FROM snapshots s JOIN processes p ON p.id=s.process_id WHERE p.numero=$1 AND s.expira_em > now() ORDER BY s.consultado_em DESC LIMIT 1",
     [numero]
   );
-  return rows[0] ? rows[0].dados : null;
+  const linha = rows[0];
+  if (!linha) return null;
+  const data = linha.estagio_data ? new Date(linha.estagio_data).toISOString() : null;
+  return {
+    id: linha.id,
+    processId: linha.process_id,
+    dados: linha.dados,
+    estagio: {
+      estagio: linha.estagio,
+      codigo: linha.estagio_codigo === null || linha.estagio_codigo === undefined ? null : Number(linha.estagio_codigo),
+      data,
+      idadeDias: data ? idadeEmDias(data) : null,
+      versao: linha.tpu_versao,
+    },
+  };
 }
 
 export async function persistSnapshot({ numero, alias, dados }) {
