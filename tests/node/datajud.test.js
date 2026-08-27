@@ -105,6 +105,41 @@ test("DataJud limita alias antes de chamar serviços externos", async () => {
   assert.equal(chamadas, 0);
 });
 
+// Regressão do BUG-3: o alias vinha do corpo e só era validado por formato, o
+// que deixava o cliente escolher qual índice do DataJud o servidor consultava.
+test("DataJud recusa alias divergente do derivado do número", async () => {
+  let chamadas = 0;
+  const req = requisicaoValida();
+  req.body.alias = "api_publica_trf1"; // número é do TJSP
+  const { res } = await executar({ req, fetchImpl: async () => { chamadas += 1; return redisResponse(); } });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(res.body, { error: "alias_invalido" });
+  assert.equal(chamadas, 0, "não pode chegar ao índice escolhido pelo cliente");
+});
+
+test("DataJud consulta o índice derivado, ignorando ausência de alias no corpo", async () => {
+  const urls = [];
+  const req = requisicaoValida();
+  delete req.body.alias;
+  const { res } = await executar({
+    req,
+    fetchImpl: async (url) => { urls.push(url); return url.startsWith("https://redis.test") ? redisResponse() : jsonResponse(200, hitsResposta()); },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(urls.some((url) => url.includes("/api_publica_tjsp/_search")), true);
+});
+
+test("DataJud recusa número com dígito verificador inválido", async () => {
+  let chamadas = 0;
+  const req = requisicaoValida();
+  req.body.numero = "00013278820188260345";
+  const { res } = await executar({ req, fetchImpl: async () => { chamadas += 1; return redisResponse(); } });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(res.body, { error: "numero_invalido" });
+  assert.equal(chamadas, 0);
+});
+
 test("DataJud traduz erros do tribunal e rede na taxonomia pública", async () => {
   const casos = [
     [404, "alias_inexistente", 502],

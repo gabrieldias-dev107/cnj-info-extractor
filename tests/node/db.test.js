@@ -41,7 +41,7 @@ function neonFake() {
 
 mock.module("@neondatabase/serverless", { namedExports: { neon: () => neonFake() } });
 
-const { claimBatchItem, createBatch, finishBatchItem, persistSnapshot, purgeExpired } = await import("../../server/db.js");
+const { claimBatchItem, createBatch, finishBatchItem, freshSnapshot, persistSnapshot, purgeExpired } = await import("../../server/db.js");
 
 function reiniciar(roteiro = []) {
   consultas.length = 0;
@@ -51,6 +51,47 @@ function reiniciar(roteiro = []) {
 function textos() {
   return consultas.map((consulta) => consulta.texto.replace(/\s+/g, " ").trim());
 }
+
+// Regressão do BUG-5 e do BUG-6: o SELECT antigo trazia só `dados`, então a
+// classificação TPU sumia da resposta de cache e o worker de lote não tinha o
+// id do snapshot para reaproveitar.
+test("freshSnapshot devolve id, process_id e o estágio montado das colunas", async () => {
+  reiniciar([[{
+    id: "snap-1",
+    process_id: "proc-1",
+    dados: { encontrado: true, total: 1, processos: [] },
+    estagio: "expedicao_alvara",
+    estagio_codigo: 12548,
+    estagio_data: "2026-08-01T00:00:00.000Z",
+    tpu_versao: VERSAO_TPU,
+  }]]);
+
+  const snap = await freshSnapshot("00013278820188260344");
+
+  const texto = textos()[0];
+  for (const coluna of ["s.id", "s.process_id", "s.estagio", "s.estagio_codigo", "s.estagio_data", "s.tpu_versao"]) {
+    assert.equal(texto.includes(coluna), true, "SELECT precisa trazer " + coluna);
+  }
+  assert.equal(snap.id, "snap-1");
+  assert.equal(snap.processId, "proc-1");
+  assert.deepEqual(snap.dados, { encontrado: true, total: 1, processos: [] });
+  assert.equal(snap.estagio.estagio, "expedicao_alvara");
+  assert.equal(snap.estagio.codigo, 12548);
+  assert.equal(snap.estagio.data, "2026-08-01T00:00:00.000Z");
+  assert.equal(snap.estagio.versao, VERSAO_TPU);
+  assert.equal(Number.isInteger(snap.estagio.idadeDias), true, "idadeDias é derivado da data, não coluna");
+});
+
+test("freshSnapshot sem estágio datado não inventa idadeDias", async () => {
+  reiniciar([[{ id: "s", process_id: "p", dados: {}, estagio: "nao_classificado", estagio_codigo: null, estagio_data: null, tpu_versao: VERSAO_TPU }]]);
+  const snap = await freshSnapshot("00013278820188260344");
+  assert.deepEqual(snap.estagio, { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: VERSAO_TPU });
+});
+
+test("freshSnapshot sem linha devolve null", async () => {
+  reiniciar([[]]);
+  assert.equal(await freshSnapshot("00013278820188260344"), null);
+});
 
 test("finishBatchItem recalcula o status do lote a partir dos itens", async () => {
   reiniciar([[{ batch_id: "lote-1" }], []]);

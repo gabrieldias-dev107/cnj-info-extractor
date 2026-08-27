@@ -41,6 +41,16 @@ test("sessão Entra orienta o cliente para o login SSO", async () => {
   await assert.rejects(() => api.verificarSessao(), /autenticacao_sso/);
 });
 
+// Regressão do BUG-4: a sessão pode expirar entre o preflight de /api/session e
+// o POST de /api/datajud. Sem isto o erro cru caía no diálogo de senha morto.
+test("sessão que expira depois do preflight ainda leva ao login SSO", async () => {
+  const numero = "00013278820188260344";
+  const { api } = cliente(async (url) => url === "/api/session"
+    ? resposta(200, {})
+    : resposta(401, { error: "autenticacao_necessaria", login: "sso" }));
+  await assert.rejects(() => api.consultarProcesso(numero), /autenticacao_sso/);
+});
+
 test("entrar e sair usam rota de sessão; sair limpa apenas cache DataJud", async () => {
   const chamadas = [];
   const { api, dados } = cliente(async (url, init) => { chamadas.push([url, init]); return resposta(204); }, {

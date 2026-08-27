@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classificarEstagio, validarLote, ttlPorEstagio } from "../../server/p0-core.js";
+import { classificarEstagio, idadeEmDias, validarLote, ttlPorEstagio } from "../../server/p0-core.js";
 
 test("classificação usa apenas códigos TPU mapeados e preserva o movimento-base", () => {
   const resultado = classificarEstagio([
@@ -47,4 +47,13 @@ test("lote preserva a linha inválida e marca duplicidade sem enfileirar", () =>
     { linha: 2, numero: "00013278820188260344", alias: "api_publica_tjsp", status: "duplicado", erro: "duplicado" },
     { linha: 3, numero: "123", alias: null, status: "invalido", erro: "numero_invalido" },
   ]);
+});
+
+test("idadeEmDias deriva a idade e trata data ausente ou futura", () => {
+  const agora = "2026-08-27T12:00:00.000Z";
+  assert.equal(idadeEmDias("2026-08-20T12:00:00.000Z", agora), 7);
+  assert.equal(idadeEmDias("2026-08-27T00:00:00.000Z", agora), 0);
+  assert.equal(idadeEmDias("2026-09-10T12:00:00.000Z", agora), 0, "data futura não vira idade negativa");
+  assert.equal(idadeEmDias(null, agora), null);
+  assert.equal(idadeEmDias("nao-e-data", agora), null);
 });

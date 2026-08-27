@@ -8,6 +8,7 @@ const estado = {
   consultar: async () => ({ encontrado: true, total: 1, processos: [{ numero: "00013278820188260344" }] }),
   persistir: async () => ({ snapshotId: "snap-1", processId: "proc-1" }),
   limite: async () => ({ permitido: true }),
+  emCache: async () => null,
 };
 const finalizados = [];
 const consultasRegistradas = [];
@@ -16,6 +17,7 @@ mock.module("../../server/db.js", {
   namedExports: {
     claimBatchItem: (...args) => estado.reivindicar(...args),
     finishBatchItem: async (id, dados) => { finalizados.push({ id, ...dados }); },
+    freshSnapshot: (...args) => estado.emCache(...args),
     persistSnapshot: (...args) => estado.persistir(...args),
     recordConsultation: async (...args) => { consultasRegistradas.push(args); },
   },
@@ -52,6 +54,7 @@ function reiniciar() {
   estado.consultar = async () => ({ encontrado: true, total: 1, processos: [{ numero: "00013278820188260344" }] });
   estado.persistir = async () => ({ snapshotId: "snap-1", processId: "proc-1" });
   estado.limite = async () => ({ permitido: true });
+  estado.emCache = async () => null;
 }
 
 test("assinatura QStash inválida impede qualquer consulta", async () => {
@@ -73,6 +76,33 @@ test("caminho feliz grava snapshot, audita e conclui o item", async () => {
   assert.equal(res.statusCode, 204);
   assert.deepEqual(finalizados, [{ id: "item-1", status: "concluido", snapshotId: "snap-1" }]);
   assert.deepEqual(consultasRegistradas, [["user-1", "proc-1", "lote"]]);
+});
+
+// Regressão do BUG-6: relançar o mesmo lote refazia a chamada ao DataJud e
+// reinseria todos os movimentos do processo a cada vez.
+test("snapshot ainda válido é reaproveitado sem tocar o DataJud", async () => {
+  reiniciar();
+  let consultou = 0;
+  let consumiuLimite = 0;
+  estado.consultar = async () => { consultou += 1; return {}; };
+  estado.limite = async () => { consumiuLimite += 1; return { permitido: true }; };
+  estado.emCache = async () => ({ id: "snap-antigo", processId: "proc-antigo", dados: {}, estagio: { estagio: "nao_classificado" } });
+  const res = resposta();
+  await handler(requisicao('{"itemId":"item-1"}'), res);
+
+  assert.equal(consultou, 0, "não deve consultar o DataJud com snapshot fresco");
+  assert.equal(consumiuLimite, 0, "não deve gastar rate limit sem ir à rede");
+  assert.equal(res.statusCode, 204);
+  assert.deepEqual(finalizados, [{ id: "item-1", status: "concluido", snapshotId: "snap-antigo" }]);
+  assert.deepEqual(consultasRegistradas, [["user-1", "proc-antigo", "lote"]], "a reutilização ainda é uma consulta auditável");
+});
+
+test("snapshot expirado não é reaproveitado", async () => {
+  reiniciar();
+  estado.emCache = async () => null;
+  const res = resposta();
+  await handler(requisicao('{"itemId":"item-1"}'), res);
+  assert.deepEqual(finalizados, [{ id: "item-1", status: "concluido", snapshotId: "snap-1" }]);
 });
 
 test("item já reivindicado por outra tentativa encerra sem reprocessar", async () => {
