@@ -146,11 +146,24 @@ Crie o agendamento diário uma vez:
 ```bash
 curl -X POST "https://qstash.upstash.io/v2/schedules/$APP_BASE_URL/api/maintenance/purge" \
   -H "Authorization: Bearer $QSTASH_TOKEN" \
-  -H "Upstash-Cron: 0 4 * * *"
+  -H "Upstash-Cron: 0 4 * * *" \
+  -H "Upstash-Forward-x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET"
 ```
 
 O job apaga sessões e lotes vencidos, snapshots com mais de 180 dias e usuários
 sem login no mesmo período.
+
+O cabeçalho `Upstash-Forward-*` só é necessário em deployments com **Deployment
+Protection** ligada: sem ele a Vercel responde 302 para o próprio SSO e o job
+nunca chega ao handler. O mesmo vale para o worker, que recebe o header de
+`server/queue.js`; ali o bypass vai por header e não por query string, porque
+`verifyQstash` assina `APP_BASE_URL + req.url` e um parâmetro a mais invalidaria
+a assinatura. `VERCEL_AUTOMATION_BYPASS_SECRET` é injetada pela Vercel quando o
+bypass está configurado — não precisa cadastrá-la à mão.
+
+Num preview protegido, o login pelo Entra também é interceptado: o navegador
+precisa carregar antes `<APP_BASE_URL>/?x-vercel-protection-bypass=<segredo>&x-vercel-set-bypass-cookie=true`,
+que grava o cookie de bypass e libera o redirect de volta do Microsoft.
 
 ### Acesso legado
 

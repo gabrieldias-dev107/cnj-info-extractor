@@ -44,6 +44,21 @@ test("publishBatchItem aponta para o worker com controle de paralelismo", async 
   assert.deepEqual(publicados[0].pedido.flowControl, { key: "cnj-datajud-batch", parallelism: 5 });
 });
 
+test("bypass da proteção da Vercel vai por header, não na URL", async () => {
+  publicados.length = 0;
+  await comAmbiente({ ...AMBIENTE, VERCEL_AUTOMATION_BYPASS_SECRET: "segredo-bypass" }, () => publishBatchItem("item-1"));
+
+  assert.deepEqual(publicados[0].pedido.headers, { "x-vercel-protection-bypass": "segredo-bypass" });
+  // Query string mudaria req.url e quebraria a assinatura conferida em verifyQstash.
+  assert.equal(publicados[0].pedido.url, "https://app.vercel.app/api/batch-worker");
+});
+
+test("sem o segredo de bypass nenhum header extra é enviado", async () => {
+  publicados.length = 0;
+  await comAmbiente({ ...AMBIENTE, VERCEL_AUTOMATION_BYPASS_SECRET: "" }, () => publishBatchItem("item-1"));
+  assert.equal(publicados[0].pedido.headers, undefined);
+});
+
 test("sem QSTASH_TOKEN a publicação falha como fila_indisponivel", async () => {
   await assert.rejects(
     () => comAmbiente({ ...AMBIENTE, QSTASH_TOKEN: "" }, () => publishBatchItem("item-1")),
