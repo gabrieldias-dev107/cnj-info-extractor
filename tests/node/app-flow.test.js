@@ -50,10 +50,33 @@ function documentoFake() {
     "login-dialog": "dialog", "login-form": "form", "login-password": "input", "login-error": "p",
     "login-submit": "button", "login-cancel": "button", "session-logout": "button",
     "batch-form": "form", "batch-numbers": "textarea", "batch-file": "input", "batch-submit": "button", "batch-status": "p",
+    "batch-itens": "div",
     "batch-export": "a",
     "batch-export-xlsx": "a",
   })) ids.set(id, new No(tag, doc));
   return doc;
+}
+
+// Contexto mínimo de janela para rodar js/app.js sob vm.
+function contexto(document, api) {
+  const global = {
+    document,
+    CNJ: {
+      normalize: (valor) => String(valor).replace(/\D/g, ""),
+      format: (valor) => valor,
+      describe: (digitos) => ({ digitos, valido: true, sequencial: "0001327", verificador: "88", ano: "2018", segmento: "8", segmentoNome: "Estadual", tribunal: "26", tribunalNome: "TJSP", tribunalConhecido: true, origem: "0344", formatado: digitos }),
+    },
+    CNJ_TABLES: { deriveAlias: () => ({ alias: "api_publica_tjsp" }) },
+    CNJApi: api,
+    Date,
+    setTimeout,
+    clearTimeout,
+    setInterval: () => 1,
+    clearInterval: () => {},
+  };
+  global.window = global;
+  global.globalThis = global;
+  return global;
 }
 
 function achar(node, predicado) {
@@ -171,4 +194,102 @@ test("modo Entra nao redireciona ao abrir a ferramenta", async () => {
   assert.equal(iniciouSso, 0);
   assert.equal(document.getElementById("session-logout").hidden, true);
   assert.equal(document.getElementById("login-dialog").open, false);
+});
+
+test("resultado online mostra o estágio TPU classificado", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({
+      encontrado: true,
+      total: 1,
+      processos: [{ grau: "G1", tribunal: "TJSP", movimentos: [] }],
+      estagio: { estagio: "expedicao_alvara", codigo: 12548, data: "2026-08-20T10:00:00.000Z", idadeDias: 7, versao: "tpu-2026-04-09-semente-1" },
+    }),
+  };
+  const global = contexto(document, api);
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  const input = document.getElementById("cnj-input");
+  input.value = "00013278820188260344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (node) => node.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const texto = document.getElementById("resultado-online").textContent;
+  assert.match(texto, /Estágio \(TPU\)/);
+  assert.match(texto, /Expedição de alvará/);
+  assert.match(texto, /código 12548/);
+  assert.match(texto, /há 7 dias/);
+});
+
+test("processo sem código curado aparece como não classificado", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({
+      encontrado: true,
+      total: 1,
+      processos: [{ grau: "G1", tribunal: "TJSP", movimentos: [] }],
+      estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-2026-04-09-semente-1" },
+    }),
+  };
+  const global = contexto(document, api);
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  const input = document.getElementById("cnj-input");
+  input.value = "00013278820188260344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (node) => node.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const texto = document.getElementById("resultado-online").textContent;
+  assert.match(texto, /Não classificado/);
+  assert.match(texto, /Nenhum movimento com código TPU curado/);
+});
+
+test("painel do lote lista cada linha com situação e estágio", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({ encontrado: false, processos: [] }),
+    criarLote: async () => ({ id: "lote-1", total: 2 }),
+    consultarLote: async () => ({
+      id: "lote-1",
+      status: "concluido",
+      total: 2,
+      contagens: { concluido: 1, invalido: 1 },
+      itens: [
+        { linha: 1, numero: "00013278820188260344", status: "concluido", erro: null, estagio: "expedicao_alvara" },
+        { linha: 2, numero: "123", status: "invalido", erro: "numero_invalido", estagio: null },
+      ],
+    }),
+  };
+  const global = contexto(document, api);
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  document.getElementById("batch-numbers").value = "00013278820188260344\n123";
+  await document.getElementById("batch-form").dispatch("submit");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const painel = document.getElementById("batch-itens");
+  assert.equal(painel.hidden, false);
+  const texto = painel.textContent;
+  assert.match(texto, /Estágio \(TPU\)/);
+  assert.match(texto, /00013278820188260344/);
+  assert.match(texto, /Concluído/);
+  assert.match(texto, /Expedição de alvará/);
+  assert.match(texto, /Número inválido — numero_invalido/);
+  // Sem innerHTML: cada célula é um nó de texto criado pelo app.
+  assert.ok(achar(painel, (node) => node.tagName === "TABLE"));
+  assert.equal(document.getElementById("batch-export").hidden, false);
 });
