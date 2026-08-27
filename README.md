@@ -64,7 +64,8 @@ Variáveis documentadas em `.env.example`. Localmente, `vercel env pull` gera o 
 | `DATAJUD_API_KEY` | sim | Chave da API Pública do DataJud |
 | `APP_ACCESS_PASSWORD` | sim | Senha compartilhada (mínimo 16 caracteres) |
 | `SESSION_SECRET` | sim | Assina a sessão e pseudonimiza IPs (mínimo 32 caracteres) |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | recomendada | Contador do rate limit |
+| `UPSTASH_REDIS_KV_REST_API_URL` / `_TOKEN` | recomendada | Criadas pela integração Upstash Vercel; contador do rate limit |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | alternativa | Nomes aceitos para ligação manual ao Upstash |
 | `RL_CLIENTE_MIN` / `RL_GLOBAL_MIN` / `RL_GLOBAL_DIA` | não | Limites DataJud (30/min por IP, 300/min e 2.000/dia globais) |
 | `RL_LOGIN_15MIN` | não | Tentativas de login por IP em 15 minutos (padrão: 10) |
 | `RL_REDIS_TIMEOUT_MS` | não | Timeout do Redis em milissegundos (padrão: 3.000) |

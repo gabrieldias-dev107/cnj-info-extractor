@@ -139,3 +139,25 @@ test("timeout Redis também cobre leitura do corpo", async () => {
     delete process.env.RL_REDIS_TIMEOUT_MS;
   }
 });
+
+test("aceita nomes de variáveis criados pela integração Upstash da Vercel", async () => {
+  const anteriorUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const anteriorToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const anteriorKvUrl = process.env.UPSTASH_REDIS_KV_REST_API_URL;
+  const anteriorKvToken = process.env.UPSTASH_REDIS_KV_REST_API_TOKEN;
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  process.env.UPSTASH_REDIS_KV_REST_API_URL = "https://redis.test";
+  process.env.UPSTASH_REDIS_KV_REST_API_TOKEN = "token";
+  const anteriorFetch = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse(200, [{ result: 1 }, { result: 1 }]);
+  try {
+    assert.equal((await consumirLogin({ headers: {} }, 0)).permitido, true);
+  } finally {
+    globalThis.fetch = anteriorFetch;
+    process.env.UPSTASH_REDIS_REST_URL = anteriorUrl;
+    process.env.UPSTASH_REDIS_REST_TOKEN = anteriorToken;
+    process.env.UPSTASH_REDIS_KV_REST_API_URL = anteriorKvUrl;
+    process.env.UPSTASH_REDIS_KV_REST_API_TOKEN = anteriorKvToken;
+  }
+});

@@ -63,8 +63,10 @@ function restante(ttl, agoraMs) {
 }
 
 async function consumir(chaves, agoraMs, falhaAberta) {
-  var url = process.env.UPSTASH_REDIS_REST_URL;
-  var token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // A integração Upstash da Vercel usa nomes KV; instalações manuais usam
+  // os nomes REST históricos. Aceitar ambos evita copiar segredo entre vars.
+  var url = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_KV_REST_API_URL;
+  var token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_KV_REST_API_TOKEN;
   if (!url || !token) return { permitido: falhaAberta, indisponivel: true, motivo: "upstash_nao_configurado" };
   var resultados;
   try { resultados = await incrementar(url, token, chaves); }
