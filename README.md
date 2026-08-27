@@ -88,6 +88,10 @@ O decodificador offline permanece público. A consulta online exige uma senha co
 por HMAC e válido por 8 horas. `DELETE /api/session` encerra a sessão e limpa o cache DataJud
 no navegador. Esta solução não exige plano pago nem dependência externa de autenticação.
 
+Como a sessão é stateless, logout remove o cookie do navegador, mas não revoga uma cópia do
+token até expirar. Se houver suspeita de exposição, troque `SESSION_SECRET` para invalidar
+todas as sessões imediatamente.
+
 O login tem limite de 10 tentativas por IP a cada 15 minutos. IPs são armazenados no Redis
 somente como HMAC, nunca em texto puro. Por ser senha compartilhada, não há identidade nem
 auditoria individual; troque `APP_ACCESS_PASSWORD` quando alguém deixar a equipe.
