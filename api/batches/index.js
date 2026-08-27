@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   if (!origemPermitida(req)) return erro(res, 403, "origem_nao_permitida");
   if (!ssoConfigurado()) return erro(res, 503, "autenticacao_indisponivel");
   const user = await currentUser(req);
-  if (!user) return erro(res, 401, "autenticacao_necessaria");
+  if (!user) return res.status(401).json({ error: "autenticacao_necessaria", login: "sso" });
 
   if (req.method === "GET") {
     const id = String((req.query || {}).id || "");

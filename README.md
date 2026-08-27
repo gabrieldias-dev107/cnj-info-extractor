@@ -108,9 +108,21 @@ pelo mesmo usuário que o criou. O resultado baixa em CSV ou XLSX; o CSV trata
 fórmulas como texto para evitar injeção em planilhas.
 
 Configure `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` e
-`QSTASH_NEXT_SIGNING_KEY` na Vercel. Agende `POST /api/maintenance/purge` no
-QStash para expurgar sessões, lotes e snapshots vencidos. Não exponha estas
-variáveis no navegador.
+`QSTASH_NEXT_SIGNING_KEY` na Vercel. Não exponha estas variáveis no navegador.
+
+O expurgo de retenção fica em `POST /api/maintenance/purge`, que aceita
+**somente** requisições assinadas pelo QStash — um Vercel Cron seria rejeitado
+com `401 assinatura_invalida`, por isso não há bloco `crons` no `vercel.json`.
+Crie o agendamento diário uma vez:
+
+```bash
+curl -X POST "https://qstash.upstash.io/v2/schedules/$APP_BASE_URL/api/maintenance/purge" \
+  -H "Authorization: Bearer $QSTASH_TOKEN" \
+  -H "Upstash-Cron: 0 4 * * *"
+```
+
+O job apaga sessões e lotes vencidos, snapshots com mais de 180 dias e usuários
+sem login no mesmo período.
 
 ### Acesso legado
 
