@@ -78,9 +78,11 @@ export async function createBatch(userId, itens) {
   const expiraEm = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
   const status = itens.some((item) => item.status === "pendente") ? "pendente" : "concluido";
   const db = sql();
+  // tx precisa ser chamado como tx.query(...): na v1 do driver, tx(...) só
+  // aceita tagged template e lança em tempo de execução com placeholders.
   await db.transaction((tx) => [
-    tx("INSERT INTO batches (id,user_id,status,total,expires_at) VALUES ($1,$2,$3,$4,$5)", [id, userId, status, itens.length, expiraEm]),
-    ...itens.map((item) => tx(
+    tx.query("INSERT INTO batches (id,user_id,status,total,expires_at) VALUES ($1,$2,$3,$4,$5)", [id, userId, status, itens.length, expiraEm]),
+    ...itens.map((item) => tx.query(
       "INSERT INTO batch_items (id,batch_id,linha,numero,alias,status,erro) VALUES ($1,$2,$3,$4,$5,$6,$7)",
       [randomUUID(), id, item.linha, item.numero || null, item.alias || null, item.status, item.erro]
     )),

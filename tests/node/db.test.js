@@ -10,19 +10,38 @@ process.env.DATABASE_URL = "postgres://exemplo/neon";
 const consultas = [];
 let respostas = [];
 
-function neonFake() {
-  return {
-    async query(texto, parametros = []) {
-      consultas.push({ texto, parametros });
-      const proxima = respostas.shift();
-      return proxima === undefined ? [] : proxima;
-    },
+// Replica a regra do driver v1: chamar sql(...)/tx(...) como função comum é
+// erro; com placeholders só vale .query(). Um fake permissivo aqui esconderia
+// exatamente o bug que derrubava createBatch contra o Neon real.
+function registrar(texto, parametros = []) {
+  consultas.push({ texto, parametros });
+  const proxima = respostas.shift();
+  return proxima === undefined ? [] : proxima;
+}
+
+function taggedOuErro() {
+  const alvo = function (textoOuPartes) {
+    if (!Array.isArray(textoOuPartes)) {
+      throw new Error("This function can now be called only as a tagged-template function");
+    }
+    return registrar(textoOuPartes.join("?"));
   };
+  alvo.query = async (texto, parametros) => registrar(texto, parametros);
+  return alvo;
+}
+
+function neonFake() {
+  const cliente = taggedOuErro();
+  cliente.transaction = async (montar) => {
+    const passos = typeof montar === "function" ? montar(taggedOuErro()) : montar;
+    return Promise.all(passos);
+  };
+  return cliente;
 }
 
 mock.module("@neondatabase/serverless", { namedExports: { neon: () => neonFake() } });
 
-const { claimBatchItem, finishBatchItem, persistSnapshot, purgeExpired } = await import("../../server/db.js");
+const { claimBatchItem, createBatch, finishBatchItem, persistSnapshot, purgeExpired } = await import("../../server/db.js");
 
 function reiniciar(roteiro = []) {
   consultas.length = 0;
@@ -123,4 +142,29 @@ test("purgeExpired apaga sessões, lotes, snapshots e usuários vencidos", async
     "DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'",
     "DELETE FROM users WHERE last_login_at < now() - interval '180 days'",
   ]);
+});
+
+test("createBatch grava lote e itens numa transação, usando tx.query", async () => {
+  reiniciar([[], [], [{ id: "item-1", linha: 1, numero: "00013278820188260344", alias: "api_publica_tjsp", status: "pendente", erro: null }]]);
+  const lote = await createBatch("user-1", [
+    { linha: 1, numero: "00013278820188260344", alias: "api_publica_tjsp", status: "pendente", erro: null },
+  ]);
+
+  assert.ok(lote.id);
+  assert.equal(lote.itens.length, 1);
+  const escritos = textos();
+  assert.match(escritos[0], /^INSERT INTO batches/);
+  assert.match(escritos[1], /^INSERT INTO batch_items/);
+  assert.match(escritos[2], /^SELECT id,linha,numero,alias,status,erro FROM batch_items/);
+  // O lote nasce "pendente" só se houver item para a fila.
+  assert.equal(consultas[0].parametros[2], "pendente");
+  assert.equal(consultas[0].parametros[3], 1);
+});
+
+test("lote sem nenhum item pendente já nasce concluído", async () => {
+  reiniciar([[], [], []]);
+  await createBatch("user-1", [
+    { linha: 1, numero: "123", alias: null, status: "invalido", erro: "numero_invalido" },
+  ]);
+  assert.equal(consultas[0].parametros[2], "concluido");
 });
