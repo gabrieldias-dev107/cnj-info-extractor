@@ -84,6 +84,7 @@ Variáveis documentadas em `.env.example`. Localmente, `vercel env pull` gera o 
 | `SSO_EMAIL_DOMINIO` | não | Domínio de e-mail aceito no login (padrão: `btblue.com.br`) |
 | `QSTASH_TOKEN` | lotes | Publica os jobs de triagem |
 | `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | lotes | Verificam a assinatura do worker e do expurgo |
+| `QSTASH_URL` | conta fora da região padrão | Endpoint regional do QStash, lido pelo SDK |
 
 ### Rotação da chave do DataJud
 
@@ -137,6 +138,12 @@ trata fórmulas como texto para evitar injeção em planilhas.
 
 Configure `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` e
 `QSTASH_NEXT_SIGNING_KEY` na Vercel. Não exponha estas variáveis no navegador.
+
+Se a conta QStash não estiver na região padrão, cadastre também `QSTASH_URL`
+(ex.: `https://qstash-us-east-1.upstash.io`). O SDK lê essa variável sozinho;
+sem ela o publish vai para o endpoint global e responde
+`404 user not found in this region`, e o mesmo endpoint regional vale para as
+chamadas de API que criam agendamentos.
 
 O expurgo de retenção fica em `POST /api/maintenance/purge`, que aceita
 **somente** requisições assinadas pelo QStash — um Vercel Cron seria rejeitado
