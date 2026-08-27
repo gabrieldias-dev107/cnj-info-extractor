@@ -151,7 +151,9 @@ test("consulta sem sessão Entra redireciona sem abrir diálogo de senha", async
   assert.equal(document.getElementById("login-dialog").open, false);
 });
 
-test("modo Entra inicia login ao abrir a ferramenta", async () => {
+test("modo Entra nao redireciona ao abrir a ferramenta", async () => {
+  // O decodificador offline é público; só as ações que exigem identidade
+  // levam ao Entra. Ver o teste da consulta online logo acima.
   const document = documentoFake();
   let iniciouSso = 0;
   const api = {
@@ -166,5 +168,7 @@ test("modo Entra inicia login ao abrir a ferramenta", async () => {
   global.globalThis = global;
   vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(iniciouSso, 1);
+  assert.equal(iniciouSso, 0);
+  assert.equal(document.getElementById("session-logout").hidden, true);
+  assert.equal(document.getElementById("login-dialog").open, false);
 });

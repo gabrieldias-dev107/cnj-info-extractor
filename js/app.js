@@ -553,10 +553,13 @@
     logoutButton.addEventListener("click", sair);
     batchForm.addEventListener("submit", enviarLote);
     batchFile.addEventListener("change", importarArquivoLote);
+    // A decodificação offline é pública: um visitante sem sessão não pode ser
+    // empurrado para o Entra só por abrir a página. O redirecionamento acontece
+    // apenas nas ações que exigem identidade (consulta online, lote, import).
     Api.verificarSessao().then(function () {
       logoutButton.hidden = false;
-    }).catch(function (erro) {
-      if (erro && erro.message === "autenticacao_sso") Api.iniciarSso();
+    }).catch(function () {
+      logoutButton.hidden = true;
     });
 
     var exemplos = doc.querySelectorAll("[data-exemplo]");
