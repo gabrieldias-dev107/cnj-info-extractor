@@ -9,20 +9,30 @@
 </head>
 <body>
   <main class="container">
-    <header>
-      <h1>Decodificador de Número CNJ</h1>
-      <button id="session-logout" class="btn-secundario logout" type="button" hidden>Sair da consulta online</button>
+    <header class="cabecalho">
+      <div class="cabecalho-linha">
+        <div>
+          <p class="produto-marca">CNJ · Leitura processual</p>
+          <h1>Decodificador de Número CNJ</h1>
+        </div>
+        <button id="session-logout" class="btn-secundario logout" type="button" hidden>Sair da consulta online</button>
+      </div>
       <p class="subtitulo">
-        Cole um número único de processo (Resolução CNJ nº 65/2008) e veja o que ele
-        revela: segmento da Justiça, tribunal, ano, unidade de origem e se o dígito
-        verificador é válido. A decodificação acontece toda no seu navegador. Você também pode,
-        opcionalmente, clicar em <strong>Consultar online</strong> para buscar dados públicos do
-        processo na API do DataJud (CNJ) — essa etapa, e só ela, envia o número a um servidor.
+        Valide e interprete o número único do processo conforme a Resolução CNJ nº 65/2008.
+        A leitura é feita no navegador; somente a consulta opcional ao DataJud envia o número
+        ao servidor.
       </p>
     </header>
 
-    <section class="entrada">
-      <label for="cnj-input">Número do processo</label>
+    <section class="entrada ficha-entrada" aria-labelledby="entrada-titulo">
+      <div class="entrada-cabecalho">
+        <div>
+          <p class="secao-marca">Identificação processual</p>
+          <h2 id="entrada-titulo">Número do processo</h2>
+        </div>
+        <span class="modo-local">Decodificação local</span>
+      </div>
+      <label class="sr-only" for="cnj-input">Número do processo</label>
       <input
         id="cnj-input"
         type="text"
@@ -31,10 +41,13 @@
         spellcheck="false"
         placeholder="0000000-00.0000.0.00.0000"
         aria-describedby="contador">
-      <div id="contador" class="contador">0/20 dígitos</div>
+      <div class="entrada-meta">
+        <div id="contador" class="contador">0/20 dígitos</div>
+        <span>Formato CNJ unificado</span>
+      </div>
 
       <div class="exemplos">
-        <span>Exemplos:</span>
+        <span>Casos de referência</span>
         <button type="button" data-exemplo="0001327-88.2018.8.26.0344">TJSP</button>
         <button type="button" data-exemplo="0010500-52.2019.5.02.0011">TRT 2ª</button>
         <button type="button" data-exemplo="0002250-82.2021.4.03.6100">TRF 3ª</button>
@@ -48,6 +61,7 @@
     <section id="resultado-online" class="resultado-online vazio" aria-live="polite"></section>
 
     <section class="ajuda">
+      <p class="secao-marca">Chave de leitura</p>
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
       <dl>
