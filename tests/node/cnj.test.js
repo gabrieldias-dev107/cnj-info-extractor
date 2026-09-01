@@ -37,6 +37,24 @@ test("CNJ calcula o dígito ISO 7064 e descreve o tribunal", () => {
   assert.equal(cnj.describe(valido).tribunalNome, "TRT da 2ª Região (SP)");
 });
 
+test("CNJ sugere somente correções válidas de um dígito e por transposição adjacente", () => {
+  const cnj = carregarCNJ();
+  const entrada = "0010500-52.2019.5.02.0012";
+  const umaTroca = cnj.sugerirCorrecoes(entrada);
+  const transposto = cnj.sugerirCorrecoes("0010500-52.2019.5.20.0011");
+
+  assert.deepEqual({ ...umaTroca.find((item) => item.numero === "00105005220195020011") }, {
+    numero: "00105005220195020011", tipo: "um_digito",
+  });
+  assert.deepEqual({ ...transposto.find((item) => item.numero === "00105005220195020011") }, {
+    numero: "00105005220195020011", tipo: "transposicao_adjacente",
+  });
+  assert.ok(umaTroca.concat(transposto).every((item) => cnj.validate(cnj.parse(item.numero))));
+  assert.equal(new Set(umaTroca.map((item) => item.numero)).size, umaTroca.length);
+  assert.equal(new Set(transposto.map((item) => item.numero)).size, transposto.length);
+  assert.equal(entrada, "0010500-52.2019.5.02.0012");
+});
+
 test("suíte legada completa permanece verde", () => {
   const global = {};
   global.window = global;
