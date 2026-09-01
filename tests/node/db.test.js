@@ -314,16 +314,17 @@ test("avanço do agendamento usa o intervalo da própria linha", async () => {
   assert.deepEqual(consultas[1].parametros, ["probe-1"]);
 });
 
-test("probe carrega o número monitorado do próprio portfólio para medir o alias", async () => {
+// O probe guarda o próprio número; nada de emprestar o número de outro item
+// monitorado do portfólio.
+test("probe do worker lê número e alias da própria linha", async () => {
   assert.equal(typeof db.healthProbeForWorker, "function", "db.healthProbeForWorker precisa existir");
   reiniciar([[{ id: "probe-1", alias: "api_publica_tjsp", numero: "00013278820188260344" }]]);
   const probe = await db.healthProbeForWorker("probe-1");
 
   assert.equal(probe.numero, "00013278820188260344");
   const consulta = textos()[0];
-  assert.match(consulta, /FROM monitored_processes mp JOIN processes p ON p\.id=mp\.process_id/);
-  assert.match(consulta, /mp\.portfolio_id=hp\.portfolio_id/);
-  assert.match(consulta, /p\.alias=hp\.alias/);
+  assert.match(consulta, /SELECT hp\.id,hp\.numero,hp\.alias,hp\.intervalo_minutos FROM health_probes hp/);
+  assert.equal(consulta.includes("monitored_processes"), false, "o número do probe não vem emprestado de item monitorado");
   assert.deepEqual(consultas[0].parametros, ["probe-1"]);
 });
 
@@ -357,7 +358,7 @@ test("alerta pendente nasce um por destinatário ativo e depende do índice úni
   assert.equal(consultas[1].parametros[4], "snap-novo");
 });
 
-test("digest lê apenas alertas ainda não aceitos pelo Resend", async () => {
+test("digest lê apenas alertas ainda não aceitos, de quem ainda tem acesso e sob o teto de tentativas", async () => {
   assert.equal(typeof db.undeliveredAlerts, "function", "db.undeliveredAlerts precisa existir");
   reiniciar([[{ id: "alerta-1", recipient_user_id: "user-1", email: "um@exemplo.test", numero: "00013278820188260344", estagio_anterior: null, estagio_atual: "expedicao_alvara" }]]);
   const pendentes = await db.undeliveredAlerts();
@@ -368,6 +369,28 @@ test("digest lê apenas alertas ainda não aceitos pelo Resend", async () => {
   assert.match(consulta, /JOIN users u ON u\.id=pa\.recipient_user_id/);
   assert.match(consulta, /NOT EXISTS \(SELECT 1 FROM alert_send_attempts asa WHERE asa\.pending_alert_id=pa\.id AND asa\.status='enviado'\)/);
   assert.match(consulta, /pa\.expires_at > now\(\)/);
+  // Quem perdeu o acesso ao portfólio para de receber o número e o estágio.
+  assert.match(consulta, /JOIN portfolios po ON po\.id=mp\.portfolio_id/);
+  assert.match(consulta, /po\.creator_user_id=pa\.recipient_user_id/);
+  assert.match(consulta, /portfolio_members pm/);
+  assert.match(consulta, /pm\.user_id=pa\.recipient_user_id/);
+  assert.match(consulta, /pm\.expires_at > now\(\)/);
+  assert.match(consulta, /po\.expires_at > now\(\)/);
+  // Teto de três tentativas: endereço que rejeita não vira envio diário eterno.
+  assert.match(consulta, /SELECT count\(\*\) FROM alert_send_attempts asa WHERE asa\.pending_alert_id=pa\.id\) < 3/);
+});
+
+test("estágio conhecido do item monitorado é lido e gravado por linha, não por processo", async () => {
+  assert.equal(typeof db.updateMonitoredProcessStage, "function", "db.updateMonitoredProcessStage precisa existir");
+  reiniciar([[{ id: "monitor-1", process_id: "proc-1", numero: "00013278820188260344", alias: "api_publica_tjsp", estagio_conhecido: "nao_classificado", estagio_conhecido_codigo: null }], []]);
+
+  const monitorado = await db.monitoredProcessForWorker("monitor-1");
+  await db.updateMonitoredProcessStage("monitor-1", { estagio: "expedicao_alvara", codigo: 12548 });
+
+  assert.equal(monitorado.estagio_conhecido, "nao_classificado");
+  assert.match(textos()[0], /mp\.estagio_conhecido,mp\.estagio_conhecido_codigo/);
+  assert.match(textos()[1], /UPDATE monitored_processes SET estagio_conhecido=\$2,estagio_conhecido_codigo=\$3 WHERE id=\$1/);
+  assert.deepEqual(consultas[1].parametros, ["monitor-1", "expedicao_alvara", 12548]);
 });
 
 test("tentativa de envio e medição de saúde gravam com placeholders e expiração de 180 dias", async () => {
@@ -388,17 +411,17 @@ test("tentativa de envio e medição de saúde gravam com placeholders e expira�
 
 test("health probe é inserido apenas por criador e com valores parametrizados", async () => {
   assert.equal(typeof db.createHealthProbe, "function", "db.createHealthProbe precisa existir");
-  reiniciar([[{ id: "probe-1", alias: "api_publica_tjsp", intervalo_minutos: 60 }]]);
+  reiniciar([[{ id: "probe-1", numero: "00013278820188260344", alias: "api_publica_tjsp", intervalo_minutos: 60 }]]);
 
-  const probe = await db.createHealthProbe("portfolio-1", "user-1", { alias: "api_publica_tjsp", intervaloMinutos: 60 });
+  const probe = await db.createHealthProbe("portfolio-1", "user-1", { numero: "00013278820188260344", alias: "api_publica_tjsp", intervaloMinutos: 60 });
 
   assert.equal(probe.id, "probe-1");
   const consulta = textos()[0];
-  assert.match(consulta, /INSERT INTO health_probes/);
-  assert.match(consulta, /SELECT \$1,\$2,\$4,\$5,\$6,\$7 FROM portfolios/);
+  assert.match(consulta, /INSERT INTO health_probes \(id,portfolio_id,numero,alias,intervalo_minutos,proxima_consulta_em,expires_at\)/);
   assert.match(consulta, /WHERE id=\$2 AND creator_user_id=\$3 AND expires_at > now\(\)/);
   assert.equal(consultas[0].parametros[1], "portfolio-1");
   assert.equal(consultas[0].parametros[2], "user-1");
-  assert.equal(consultas[0].parametros[3], "api_publica_tjsp");
-  assert.equal(consultas[0].parametros[4], 60);
+  assert.equal(consultas[0].parametros[3], "00013278820188260344");
+  assert.equal(consultas[0].parametros[4], "api_publica_tjsp");
+  assert.equal(consultas[0].parametros[5], 60);
 });

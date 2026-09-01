@@ -14,10 +14,11 @@ function reiniciar() {
   registros.tentativasEnvio = [];
   registros.emails = [];
   registros.persistidos = [];
+  registros.estagiosGravados = [];
 
   estado.verificarAssinatura = async () => true;
   estado.monitoradosDevidos = async () => [{ id: "monitor-1" }, { id: "monitor-2" }];
-  estado.monitorado = async () => ({ id: "monitor-1", process_id: "proc-1", numero: "00013278820188260344", alias: "api_publica_tjsp", intervalo_minutos: 60 });
+  estado.monitorado = async () => ({ id: "monitor-1", process_id: "proc-1", numero: "00013278820188260344", alias: "api_publica_tjsp", intervalo_minutos: 60, estagio_conhecido: "nao_classificado", estagio_conhecido_codigo: null });
   estado.ultimoSnapshot = async () => ({ id: "snap-antigo", estagio: "nao_classificado" });
   estado.persistir = async () => ({ snapshotId: "snap-novo", processId: "proc-1", estagio: { estagio: "expedicao_alvara", codigo: 12548 } });
   estado.probesDevidos = async () => [{ id: "probe-1" }];
@@ -49,6 +50,7 @@ mock.module("../../server/db.js", {
     advanceHealthProbe: async (id) => { registros.avancados.push({ tipo: "saude", id }); },
     recordHealthMeasurement: async (medicao) => { registros.medicoes.push(medicao); },
     latestSnapshotForProcess: (...args) => estado.ultimoSnapshot(...args),
+    updateMonitoredProcessStage: async (id, estagio) => { registros.estagiosGravados.push({ id, ...estagio }); },
     persistSnapshot: async (dados) => { registros.persistidos.push(dados); return estado.persistir(dados); },
     createPendingAlerts: async (alerta) => { registros.alertas.push(alerta); return [{ id: "alerta-1" }]; },
     undeliveredAlerts: (...args) => estado.alertasPendentes(...args),
@@ -175,6 +177,33 @@ test("mudança relevante de estágio cria um alerta pendente por destinatário",
     estagioAnterior: "nao_classificado",
     estagioAtual: "expedicao_alvara",
   }]);
+  assert.deepEqual(registros.estagiosGravados, [{ id: "monitor-1", estagio: "expedicao_alvara", codigo: 12548 }]);
+});
+
+// Regressão do achado da revisão: `processes`/`snapshots` são globais por
+// número, então uma consulta manual ou outro portfólio podia consumir a
+// transição antes deste item e o alerta nunca sair.
+test("transição já registrada por outro portfólio ainda alerta este item", async () => {
+  reiniciar();
+  // O snapshot compartilhado já está no estágio novo; o que este item conhece
+  // continua sendo o antigo.
+  estado.ultimoSnapshot = async () => ({ id: "snap-antigo", estagio: "expedicao_alvara" });
+  const res = resposta();
+  await monitorItem(requisicao('{"monitoredProcessId":"monitor-1"}'), res);
+
+  assert.equal(res.statusCode, 204);
+  assert.equal(registros.alertas.length, 1, "a comparação é por item monitorado, não pelo snapshot compartilhado");
+  assert.equal(registros.alertas[0].estagioAnterior, "nao_classificado");
+});
+
+test("item já ciente do estágio não alerta de novo, mas o estágio conhecido é sempre gravado", async () => {
+  reiniciar();
+  estado.monitorado = async () => ({ id: "monitor-1", process_id: "proc-1", numero: "00013278820188260344", alias: "api_publica_tjsp", intervalo_minutos: 60, estagio_conhecido: "expedicao_alvara", estagio_conhecido_codigo: 12548 });
+  const res = resposta();
+  await monitorItem(requisicao('{"monitoredProcessId":"monitor-1"}'), res);
+
+  assert.deepEqual(registros.alertas, []);
+  assert.deepEqual(registros.estagiosGravados, [{ id: "monitor-1", estagio: "expedicao_alvara", codigo: 12548 }]);
 });
 
 test("estágio sem transição aprovada persiste o snapshot mas não gera alerta", async () => {
@@ -187,6 +216,7 @@ test("estágio sem transição aprovada persiste o snapshot mas não gera alerta
   assert.equal(res.statusCode, 204);
   assert.equal(registros.persistidos.length, 1);
   assert.deepEqual(registros.alertas, [], "repetir o mesmo estágio não alerta");
+  assert.deepEqual(registros.estagiosGravados, [{ id: "monitor-1", estagio: "nao_classificado", codigo: null }]);
 });
 
 test("orçamento de monitoramento negado bloqueia a consulta ao DataJud", async () => {
@@ -263,16 +293,15 @@ test("circuito aberto registra medição própria sem consultar o tribunal", asy
   assert.deepEqual(registros.medicoes.map((medicao) => medicao.status), ["circuito_aberto"]);
 });
 
-test("probe sem processo configurado não consome orçamento", async () => {
+test("medição usa o número e o alias gravados no próprio probe", async () => {
   reiniciar();
-  let consumiu = 0;
-  estado.probe = async () => ({ id: "probe-1", alias: "api_publica_tjsp", numero: null });
-  estado.orcamentoSaude = async () => { consumiu += 1; return { permitido: true }; };
+  const consultados = [];
+  estado.consultar = async (numero, alias) => { consultados.push([numero, alias]); return { encontrado: true, processos: [] }; };
   const res = resposta();
   await saudeItem(requisicao('{"healthProbeId":"probe-1"}'), res);
 
-  assert.equal(consumiu, 0);
-  assert.deepEqual(registros.medicoes.map((medicao) => medicao.status), ["nao_configurado"]);
+  assert.deepEqual(consultados, [["00013278820188260344", "api_publica_tjsp"]]);
+  assert.equal(res.statusCode, 204);
 });
 
 test("digest envia um e-mail por destinatário e só marca enviado após aceite do Resend", async () => {

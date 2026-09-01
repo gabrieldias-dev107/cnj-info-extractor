@@ -300,10 +300,20 @@ export async function dueMonitoredProcesses(limite) {
 
 export async function monitoredProcessForWorker(monitoredProcessId) {
   const rows = await sql().query(
-    "SELECT mp.id,mp.portfolio_id,mp.process_id,mp.intervalo_minutos,p.numero,p.alias FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id WHERE mp.id=$1 AND mp.expires_at > now() AND po.expires_at > now()",
+    "SELECT mp.id,mp.portfolio_id,mp.process_id,mp.intervalo_minutos,mp.estagio_conhecido,mp.estagio_conhecido_codigo,p.numero,p.alias FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id WHERE mp.id=$1 AND mp.expires_at > now() AND po.expires_at > now()",
     [monitoredProcessId]
   );
   return rows[0] || null;
+}
+
+// O estágio conhecido é por item monitorado, não por processo: dois portfólios
+// que acompanham o mesmo número precisam alertar cada um a sua vez, e uma
+// consulta manual no meio do caminho não pode consumir a transição.
+export async function updateMonitoredProcessStage(monitoredProcessId, { estagio, codigo = null }) {
+  await sql().query(
+    "UPDATE monitored_processes SET estagio_conhecido=$2,estagio_conhecido_codigo=$3 WHERE id=$1",
+    [monitoredProcessId, estagio, codigo]
+  );
 }
 
 export async function advanceMonitoredProcess(monitoredProcessId) {
@@ -320,12 +330,9 @@ export async function dueHealthProbes(limite) {
   );
 }
 
-// O probe guarda só o alias; o número medido é o de um processo que o criador
-// já monitora naquele portfólio para o mesmo alias. Sem processo configurado,
-// `numero` vem nulo e o worker registra a medição sem tocar no DataJud.
 export async function healthProbeForWorker(healthProbeId) {
   const rows = await sql().query(
-    "SELECT hp.id,hp.alias,hp.intervalo_minutos,(SELECT p.numero FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id WHERE mp.portfolio_id=hp.portfolio_id AND mp.expires_at > now() AND p.alias=hp.alias ORDER BY mp.created_at LIMIT 1) AS numero FROM health_probes hp JOIN portfolios po ON po.id=hp.portfolio_id WHERE hp.id=$1 AND hp.expires_at > now() AND po.expires_at > now()",
+    "SELECT hp.id,hp.numero,hp.alias,hp.intervalo_minutos FROM health_probes hp JOIN portfolios po ON po.id=hp.portfolio_id WHERE hp.id=$1 AND hp.expires_at > now() AND po.expires_at > now()",
     [healthProbeId]
   );
   return rows[0] || null;
@@ -375,9 +382,15 @@ export async function createPendingAlerts({ monitoredProcessId, snapshotAnterior
 
 // "Entregue" é a existência de uma tentativa aceita; não há coluna de envio em
 // pending_alerts, e o histórico de falhas fica preservado em alert_send_attempts.
+// Três filtros compõem a fila do digest:
+//   1. ainda não aceito pelo Resend;
+//   2. o destinatário continua criador ou membro ativo — quem foi removido do
+//      portfólio para de receber número e estágio no e-mail;
+//   3. no máximo três tentativas por alerta, para um endereço que rejeita não
+//      virar envio diário por 180 dias e queimar o domínio remetente.
 export async function undeliveredAlerts() {
   return sql().query(
-    "SELECT pa.id,pa.recipient_user_id,u.email,p.numero,pa.estagio_anterior,pa.estagio_atual,pa.created_at FROM pending_alerts pa JOIN users u ON u.id=pa.recipient_user_id JOIN monitored_processes mp ON mp.id=pa.monitored_process_id JOIN processes p ON p.id=mp.process_id WHERE pa.expires_at > now() AND NOT EXISTS (SELECT 1 FROM alert_send_attempts asa WHERE asa.pending_alert_id=pa.id AND asa.status='enviado') ORDER BY u.email,pa.created_at"
+    "SELECT pa.id,pa.recipient_user_id,u.email,p.numero,pa.estagio_anterior,pa.estagio_atual,pa.created_at FROM pending_alerts pa JOIN users u ON u.id=pa.recipient_user_id JOIN monitored_processes mp ON mp.id=pa.monitored_process_id JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=po.id AND pm.user_id=pa.recipient_user_id AND pm.expires_at > now() WHERE pa.expires_at > now() AND mp.expires_at > now() AND po.expires_at > now() AND (po.creator_user_id=pa.recipient_user_id OR pm.user_id=pa.recipient_user_id) AND NOT EXISTS (SELECT 1 FROM alert_send_attempts asa WHERE asa.pending_alert_id=pa.id AND asa.status='enviado') AND (SELECT count(*) FROM alert_send_attempts asa WHERE asa.pending_alert_id=pa.id) < 3 ORDER BY u.email,pa.created_at"
   );
 }
 
@@ -390,24 +403,27 @@ export async function recordAlertSendAttempt(pendingAlertId, { status, erro = nu
 
 export async function healthProbesForUser(portfolioId, userId) {
   return sql().query(
-    "SELECT hp.id,hp.alias,hp.intervalo_minutos,hp.proxima_consulta_em FROM health_probes hp JOIN portfolios p ON p.id=hp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=p.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE hp.portfolio_id=$1 AND hp.expires_at > now() AND p.expires_at > now() AND (p.creator_user_id=$2 OR pm.user_id=$2) ORDER BY hp.created_at DESC",
+    "SELECT hp.id,hp.numero,hp.alias,hp.intervalo_minutos,hp.proxima_consulta_em FROM health_probes hp JOIN portfolios p ON p.id=hp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=p.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE hp.portfolio_id=$1 AND hp.expires_at > now() AND p.expires_at > now() AND (p.creator_user_id=$2 OR pm.user_id=$2) ORDER BY hp.created_at DESC",
     [portfolioId, userId]
   );
 }
 
-export async function createHealthProbe(portfolioId, userId, { alias, intervaloMinutos }) {
+// `numero` e `alias` chegam já validados pelo handler, que deriva o alias do
+// número com `validarNumeroParaConsulta`; aqui os dois são apenas gravados.
+export async function createHealthProbe(portfolioId, userId, { numero, alias, intervaloMinutos }) {
   const now = new Date();
   const rows = await sql().query(
-    "INSERT INTO health_probes (id,portfolio_id,alias,intervalo_minutos,proxima_consulta_em,expires_at) SELECT $1,$2,$4,$5,$6,$7 FROM portfolios WHERE id=$2 AND creator_user_id=$3 AND expires_at > now() RETURNING id,alias,intervalo_minutos,proxima_consulta_em",
-    [randomUUID(), portfolioId, userId, alias, intervaloMinutos, now, p1ExpiresAt()]
+    "INSERT INTO health_probes (id,portfolio_id,numero,alias,intervalo_minutos,proxima_consulta_em,expires_at) SELECT $1,$2,$4,$5,$6,$7,$8 FROM portfolios WHERE id=$2 AND creator_user_id=$3 AND expires_at > now() RETURNING id,numero,alias,intervalo_minutos,proxima_consulta_em",
+    [randomUUID(), portfolioId, userId, numero, alias, intervaloMinutos, now, p1ExpiresAt()]
   );
   return rows[0] || null;
 }
 
-export async function updateHealthProbeForCreator(portfolioId, probeId, userId, { alias = null, intervaloMinutos }) {
+// Número e alias andam juntos: ou os dois são trocados, ou os dois ficam.
+export async function updateHealthProbeForCreator(portfolioId, probeId, userId, { numero = null, alias = null, intervaloMinutos }) {
   const rows = await sql().query(
-    "UPDATE health_probes hp SET alias=COALESCE($4,hp.alias),intervalo_minutos=$5,proxima_consulta_em=now() WHERE hp.id=$2 AND hp.portfolio_id=$1 AND hp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios p WHERE p.id=hp.portfolio_id AND p.creator_user_id=$3 AND p.expires_at > now()) RETURNING id,alias,intervalo_minutos,proxima_consulta_em",
-    [portfolioId, probeId, userId, alias, intervaloMinutos]
+    "UPDATE health_probes hp SET numero=COALESCE($4,hp.numero),alias=COALESCE($5,hp.alias),intervalo_minutos=$6,proxima_consulta_em=now() WHERE hp.id=$2 AND hp.portfolio_id=$1 AND hp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios p WHERE p.id=hp.portfolio_id AND p.creator_user_id=$3 AND p.expires_at > now()) RETURNING id,numero,alias,intervalo_minutos,proxima_consulta_em",
+    [portfolioId, probeId, userId, numero, alias, intervaloMinutos]
   );
   return rows[0] || null;
 }

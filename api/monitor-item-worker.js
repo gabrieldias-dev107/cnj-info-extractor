@@ -1,4 +1,4 @@
-import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot } from "../server/db.js";
+import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot, updateMonitoredProcessStage } from "../server/db.js";
 import { consultarComResiliencia } from "../server/p1-automation.js";
 import { mudancaRelevante } from "../server/p1-core.js";
 import { verifyQstash } from "../server/queue.js";
@@ -40,21 +40,28 @@ export default async function handler(req, res) {
     const monitorado = await monitoredProcessForWorker(monitoradoId);
     if (!monitorado) return res.status(204).end();
 
+    // `anterior` serve só para amarrar o alerta ao snapshot que veio antes.
+    // A comparação NÃO pode usá-lo: `processes`/`snapshots` são globais por
+    // número, então uma consulta manual ou o tick de outro portfólio já teria
+    // consumido a transição e este item nunca alertaria.
     const anterior = await latestSnapshotForProcess(monitorado.process_id);
+    const conhecido = { estagio: monitorado.estagio_conhecido };
     const resposta = await consultarComResiliencia(monitorado.numero, monitorado.alias, { consumirOrcamento: () => consumirMonitoramento() });
     const salvo = await persistSnapshot({ numero: monitorado.numero, alias: monitorado.alias, dados: resposta });
 
     // A relevância vem só do catálogo TPU versionado; nome de movimento nunca
     // decide alerta.
-    if (mudancaRelevante(anterior, salvo.estagio)) {
+    if (mudancaRelevante(conhecido, salvo.estagio)) {
       await createPendingAlerts({
         monitoredProcessId: monitorado.id,
         snapshotAnteriorId: anterior ? anterior.id : null,
         snapshotAtualId: salvo.snapshotId,
-        estagioAnterior: anterior ? anterior.estagio : null,
+        estagioAnterior: monitorado.estagio_conhecido || null,
         estagioAtual: salvo.estagio.estagio,
       });
     }
+    // Gravado sempre, com ou sem alerta: é o que este item passa a conhecer.
+    await updateMonitoredProcessStage(monitorado.id, { estagio: salvo.estagio.estagio, codigo: salvo.estagio.codigo });
     return res.status(204).end();
   } catch (error) {
     const erro = codigo(error);

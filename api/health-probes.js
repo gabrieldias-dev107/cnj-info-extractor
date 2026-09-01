@@ -2,8 +2,8 @@ import { currentUser } from "../server/sso.js";
 import { ssoConfigurado } from "../server/sso-config.js";
 import { origemPermitida } from "../server/origin.js";
 import { createHealthProbe, deleteHealthProbeForCreator, healthProbesForUser, portfolioForUser, updateHealthProbeForCreator } from "../server/db.js";
+import { validarNumeroParaConsulta } from "../server/cnj-validation.js";
 
-const ALIAS_RE = /^api_publica_[a-z0-9-]{1,52}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_INTERVALO_MINUTOS = 1440;
 
@@ -29,8 +29,18 @@ function intervalo(valor) {
   return typeof valor === "number" && Number.isFinite(valor) && Number.isInteger(valor) && valor > 0 && valor <= MAX_INTERVALO_MINUTOS ? valor : null;
 }
 
+// O alias NUNCA vem do cliente: quem escolhe o índice do DataJud é o servidor,
+// derivando-o do número informado pelo criador — a mesma regra da consulta
+// manual em `api/datajud.js`. Um alias no corpo é simplesmente ignorado.
+function probeConfigurado(valor) {
+  const validacao = validarNumeroParaConsulta(valor);
+  return validacao.valido ? { numero: validacao.numero, alias: validacao.alias } : null;
+}
+
 function probePublico(probe) {
-  const publico = { id: probe.id, alias: probe.alias };
+  const publico = { id: probe.id };
+  if (probe.numero !== undefined) publico.numero = probe.numero;
+  if (probe.alias !== undefined) publico.alias = probe.alias;
   if (probe.intervalo_minutos !== undefined) publico.intervaloMinutos = probe.intervalo_minutos;
   if (probe.proxima_consulta_em !== undefined) publico.proximaConsultaEm = probe.proxima_consulta_em;
   return publico;
@@ -49,22 +59,22 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === "POST") {
-      const alias = texto(body.alias);
+      const configurado = probeConfigurado(body.numero);
       const intervaloMinutos = intervalo(body.intervaloMinutos);
-      if (!ALIAS_RE.test(alias) || !intervaloMinutos) return erro(res, 400, "probe_invalido");
+      if (!configurado || !intervaloMinutos) return erro(res, 400, "probe_invalido");
       const portfolio = await portfolioForUser(portfolioId, user.id);
       if (!portfolio || portfolio.papel !== "criador") return erro(res, 404, "portfolio_nao_encontrado");
-      const probe = await createHealthProbe(portfolioId, user.id, { alias, intervaloMinutos });
+      const probe = await createHealthProbe(portfolioId, user.id, { ...configurado, intervaloMinutos });
       if (!probe) return erro(res, 404, "portfolio_nao_encontrado");
       return res.status(201).json(probePublico(probe));
     }
     if (req.method === "PATCH") {
-      const alias = body.alias === undefined ? null : texto(body.alias);
+      const configurado = body.numero === undefined ? null : probeConfigurado(body.numero);
       const intervaloMinutos = intervalo(body.intervaloMinutos);
-      if (!id || (alias !== null && !ALIAS_RE.test(alias)) || !intervaloMinutos) return erro(res, 400, "probe_invalido");
+      if (!id || (body.numero !== undefined && !configurado) || !intervaloMinutos) return erro(res, 400, "probe_invalido");
       const portfolio = await portfolioForUser(portfolioId, user.id);
       if (!portfolio || portfolio.papel !== "criador") return erro(res, 404, "portfolio_nao_encontrado");
-      const dados = alias === null ? { intervaloMinutos } : { alias, intervaloMinutos };
+      const dados = configurado === null ? { intervaloMinutos } : { ...configurado, intervaloMinutos };
       const probe = await updateHealthProbeForCreator(portfolioId, id, user.id, dados);
       if (!probe) return erro(res, 404, "portfolio_nao_encontrado");
       return res.status(200).json(probePublico(probe));

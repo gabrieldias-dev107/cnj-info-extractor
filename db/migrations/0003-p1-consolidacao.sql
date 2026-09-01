@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS monitored_processes (
   process_id UUID NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
   intervalo_minutos INTEGER NOT NULL CHECK (intervalo_minutos > 0),
   proxima_consulta_em TIMESTAMPTZ NOT NULL,
+  -- Último estágio que ESTE item já viu. `processes`/`snapshots` são globais
+  -- por número: sem esta coluna, uma consulta manual ou outro portfólio
+  -- consumiria a transição e os destinatários deste item nunca seriam
+  -- avisados. Nulo enquanto o item nunca foi consultado pela automação.
+  estagio_conhecido TEXT,
+  estagio_conhecido_codigo INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL,
   UNIQUE (portfolio_id, process_id)
@@ -29,6 +35,9 @@ CREATE TABLE IF NOT EXISTS monitored_processes (
 CREATE TABLE IF NOT EXISTS health_probes (
   id UUID PRIMARY KEY,
   portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+  -- O probe mede "alias + número configurado pelo criador". O número é dado
+  -- pelo criador; o alias é derivado dele no servidor, nunca aceito do cliente.
+  numero TEXT NOT NULL,
   alias TEXT NOT NULL,
   intervalo_minutos INTEGER NOT NULL CHECK (intervalo_minutos > 0),
   proxima_consulta_em TIMESTAMPTZ NOT NULL,

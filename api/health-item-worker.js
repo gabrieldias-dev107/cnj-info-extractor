@@ -28,13 +28,6 @@ export default async function handler(req, res) {
     const probe = await healthProbeForWorker(probeId);
     if (!probe) return res.status(204).end();
 
-    // Sem processo monitorado para o alias não há o que medir; a medição fica
-    // registrada assim mesmo para o criador enxergar a configuração faltando.
-    if (!probe.numero) {
-      await recordHealthMeasurement({ healthProbeId: probe.id, status: "nao_configurado", statusCode: null, duracaoMs: null });
-      return res.status(204).end();
-    }
-
     // O circuito aberto é estado observável do tribunal: vira medição própria,
     // sem gastar orçamento nem bater no DataJud.
     if (await circuitoAberto(probe.alias)) {
