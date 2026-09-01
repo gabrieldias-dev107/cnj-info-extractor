@@ -151,10 +151,20 @@ export async function finishBatchItem(itemId, { status, erro = null, snapshotId 
   );
 }
 
+// A ordem vai de filha para mãe. O ON DELETE CASCADE da migration cobriria os
+// filhos, mas registros P1 vencem antes do pai (um alerta expira sem o
+// portfólio expirar), então cada tabela é apagada pelo seu próprio expires_at.
 export async function purgeExpired() {
   const db = sql();
   await db.query("DELETE FROM sessions WHERE expires_at <= now()");
   await db.query("DELETE FROM batches WHERE expires_at <= now()");
+  await db.query("DELETE FROM alert_send_attempts WHERE expires_at <= now()");
+  await db.query("DELETE FROM pending_alerts WHERE expires_at <= now()");
+  await db.query("DELETE FROM tribunal_health_measurements WHERE expires_at <= now()");
+  await db.query("DELETE FROM health_probes WHERE expires_at <= now()");
+  await db.query("DELETE FROM monitored_processes WHERE expires_at <= now()");
+  await db.query("DELETE FROM portfolio_members WHERE expires_at <= now()");
+  await db.query("DELETE FROM portfolios WHERE expires_at <= now()");
   await db.query("DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'");
   await db.query("DELETE FROM users WHERE last_login_at < now() - interval '180 days'");
 }
@@ -273,6 +283,109 @@ export async function processHistoryForUser(numero, userId) {
     [acessiveis[0].id]
   );
   return { snapshots };
+}
+
+// ---------------------------------------------------------------------------
+// Automação P1: seleção de trabalho devido, medições, alertas e envios.
+// Estas funções não têm dono humano na requisição; o escopo vem do próprio
+// agendamento, e a validade é sempre reconferida contra o portfólio.
+// ---------------------------------------------------------------------------
+
+export async function dueMonitoredProcesses(limite) {
+  return sql().query(
+    "SELECT mp.id FROM monitored_processes mp JOIN portfolios po ON po.id=mp.portfolio_id WHERE mp.expires_at > now() AND po.expires_at > now() AND mp.proxima_consulta_em <= now() ORDER BY mp.proxima_consulta_em LIMIT $1",
+    [limite]
+  );
+}
+
+export async function monitoredProcessForWorker(monitoredProcessId) {
+  const rows = await sql().query(
+    "SELECT mp.id,mp.portfolio_id,mp.process_id,mp.intervalo_minutos,p.numero,p.alias FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id WHERE mp.id=$1 AND mp.expires_at > now() AND po.expires_at > now()",
+    [monitoredProcessId]
+  );
+  return rows[0] || null;
+}
+
+export async function advanceMonitoredProcess(monitoredProcessId) {
+  await sql().query(
+    "UPDATE monitored_processes SET proxima_consulta_em=now() + (intervalo_minutos * interval '1 minute') WHERE id=$1",
+    [monitoredProcessId]
+  );
+}
+
+export async function dueHealthProbes(limite) {
+  return sql().query(
+    "SELECT hp.id FROM health_probes hp JOIN portfolios po ON po.id=hp.portfolio_id WHERE hp.expires_at > now() AND po.expires_at > now() AND hp.proxima_consulta_em <= now() ORDER BY hp.proxima_consulta_em LIMIT $1",
+    [limite]
+  );
+}
+
+// O probe guarda só o alias; o número medido é o de um processo que o criador
+// já monitora naquele portfólio para o mesmo alias. Sem processo configurado,
+// `numero` vem nulo e o worker registra a medição sem tocar no DataJud.
+export async function healthProbeForWorker(healthProbeId) {
+  const rows = await sql().query(
+    "SELECT hp.id,hp.alias,hp.intervalo_minutos,(SELECT p.numero FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id WHERE mp.portfolio_id=hp.portfolio_id AND mp.expires_at > now() AND p.alias=hp.alias ORDER BY mp.created_at LIMIT 1) AS numero FROM health_probes hp JOIN portfolios po ON po.id=hp.portfolio_id WHERE hp.id=$1 AND hp.expires_at > now() AND po.expires_at > now()",
+    [healthProbeId]
+  );
+  return rows[0] || null;
+}
+
+export async function advanceHealthProbe(healthProbeId) {
+  await sql().query(
+    "UPDATE health_probes SET proxima_consulta_em=now() + (intervalo_minutos * interval '1 minute') WHERE id=$1",
+    [healthProbeId]
+  );
+}
+
+export async function recordHealthMeasurement({ healthProbeId, status, statusCode = null, duracaoMs = null }) {
+  await sql().query(
+    "INSERT INTO tribunal_health_measurements (id,health_probe_id,status,status_code,duracao_ms,expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+    [randomUUID(), healthProbeId, status, statusCode, duracaoMs, p1ExpiresAt()]
+  );
+}
+
+export async function latestSnapshotForProcess(processId) {
+  const rows = await sql().query(
+    "SELECT id,estagio,estagio_codigo FROM snapshots WHERE process_id=$1 ORDER BY consultado_em DESC LIMIT 1",
+    [processId]
+  );
+  return rows[0] || null;
+}
+
+// Um alerta por destinatário ativo. A deduplicação é do índice único
+// (monitored_process_id, recipient_user_id, snapshot_atual_id): reprocessar o
+// mesmo snapshot não gera alerta repetido.
+export async function createPendingAlerts({ monitoredProcessId, snapshotAnteriorId = null, snapshotAtualId, estagioAnterior = null, estagioAtual }) {
+  const db = sql();
+  const destinatarios = await db.query(
+    "SELECT po.creator_user_id AS user_id FROM monitored_processes mp JOIN portfolios po ON po.id=mp.portfolio_id WHERE mp.id=$1 AND mp.expires_at > now() AND po.expires_at > now() UNION SELECT pm.user_id FROM monitored_processes mp JOIN portfolios po ON po.id=mp.portfolio_id JOIN portfolio_members pm ON pm.portfolio_id=mp.portfolio_id WHERE mp.id=$1 AND mp.expires_at > now() AND po.expires_at > now() AND pm.expires_at > now()",
+    [monitoredProcessId]
+  );
+  const criados = [];
+  for (const destinatario of destinatarios) {
+    const rows = await db.query(
+      "INSERT INTO pending_alerts (id,monitored_process_id,recipient_user_id,snapshot_anterior_id,snapshot_atual_id,estagio_anterior,estagio_atual,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (monitored_process_id,recipient_user_id,snapshot_atual_id) DO NOTHING RETURNING id,recipient_user_id",
+      [randomUUID(), monitoredProcessId, destinatario.user_id, snapshotAnteriorId, snapshotAtualId, estagioAnterior, estagioAtual, p1ExpiresAt()]
+    );
+    if (rows[0]) criados.push(rows[0]);
+  }
+  return criados;
+}
+
+// "Entregue" é a existência de uma tentativa aceita; não há coluna de envio em
+// pending_alerts, e o histórico de falhas fica preservado em alert_send_attempts.
+export async function undeliveredAlerts() {
+  return sql().query(
+    "SELECT pa.id,pa.recipient_user_id,u.email,p.numero,pa.estagio_anterior,pa.estagio_atual,pa.created_at FROM pending_alerts pa JOIN users u ON u.id=pa.recipient_user_id JOIN monitored_processes mp ON mp.id=pa.monitored_process_id JOIN processes p ON p.id=mp.process_id WHERE pa.expires_at > now() AND NOT EXISTS (SELECT 1 FROM alert_send_attempts asa WHERE asa.pending_alert_id=pa.id AND asa.status='enviado') ORDER BY u.email,pa.created_at"
+  );
+}
+
+export async function recordAlertSendAttempt(pendingAlertId, { status, erro = null }) {
+  await sql().query(
+    "INSERT INTO alert_send_attempts (id,pending_alert_id,status,erro,expires_at) VALUES ($1,$2,$3,$4,$5)",
+    [randomUUID(), pendingAlertId, status, erro, p1ExpiresAt()]
+  );
 }
 
 export async function healthProbesForUser(portfolioId, userId) {

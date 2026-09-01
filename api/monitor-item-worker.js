@@ -1,0 +1,66 @@
+import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot } from "../server/db.js";
+import { consultarComResiliencia } from "../server/p1-automation.js";
+import { mudancaRelevante } from "../server/p1-core.js";
+import { verifyQstash } from "../server/queue.js";
+import { consumirMonitoramento } from "../server/rate-limit.js";
+
+export const config = { api: { bodyParser: false } };
+
+// Erros que não melhoram com repetição: devolver 204 evita que o QStash fique
+// reenfileirando um item que só volta com mudança de configuração.
+const TERMINAIS = new Set(["alias_inexistente", "config_ausente"]);
+
+async function lerBody(req) {
+  const partes = [];
+  for await (const parte of req) partes.push(parte);
+  return Buffer.concat(partes).toString("utf8");
+}
+
+function codigo(error) {
+  return String((error && (error.codigo || error.message)) || "erro_interno");
+}
+
+function statusDoErro(erro) {
+  if (TERMINAIS.has(erro)) return 204;
+  if (erro === "orcamento_excedido") return 429;
+  if (erro === "circuito_aberto") return 503;
+  return 500;
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "metodo_nao_permitido" });
+  let monitoradoId = null;
+  try {
+    const raw = await lerBody(req);
+    if (!await verifyQstash(req, raw)) return res.status(401).json({ error: "assinatura_invalida" });
+    const body = JSON.parse(raw);
+    if (!body || typeof body.monitoredProcessId !== "string") return res.status(400).json({ error: "item_invalido" });
+
+    monitoradoId = body.monitoredProcessId;
+    const monitorado = await monitoredProcessForWorker(monitoradoId);
+    if (!monitorado) return res.status(204).end();
+
+    const anterior = await latestSnapshotForProcess(monitorado.process_id);
+    const resposta = await consultarComResiliencia(monitorado.numero, monitorado.alias, { consumirOrcamento: () => consumirMonitoramento() });
+    const salvo = await persistSnapshot({ numero: monitorado.numero, alias: monitorado.alias, dados: resposta });
+
+    // A relevância vem só do catálogo TPU versionado; nome de movimento nunca
+    // decide alerta.
+    if (mudancaRelevante(anterior, salvo.estagio)) {
+      await createPendingAlerts({
+        monitoredProcessId: monitorado.id,
+        snapshotAnteriorId: anterior ? anterior.id : null,
+        snapshotAtualId: salvo.snapshotId,
+        estagioAnterior: anterior ? anterior.estagio : null,
+        estagioAtual: salvo.estagio.estagio,
+      });
+    }
+    return res.status(204).end();
+  } catch (error) {
+    const erro = codigo(error);
+    const status = statusDoErro(erro);
+    // Só identificadores no log: o número CNJ não sai daqui.
+    console.error(JSON.stringify({ evento: "monitoramento_falhou", monitoredProcessId: monitoradoId, erro }));
+    return status === 204 ? res.status(204).end() : res.status(status).json({ error: erro });
+  }
+}

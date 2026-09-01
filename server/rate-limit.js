@@ -25,12 +25,7 @@ function bucket(prefixo, segundos, agoraMs) {
   return prefixo + ":" + Math.floor(agoraMs / (segundos * 1000));
 }
 
-async function incrementar(url, token, chaves) {
-  var comandos = [];
-  chaves.forEach(function (chave) {
-    comandos.push(["INCR", chave.nome]);
-    comandos.push(["EXPIRE", chave.nome, String(chave.ttl), "NX"]);
-  });
+async function chamarPipeline(url, token, comandos) {
   var controller = new AbortController();
   var timer = setTimeout(function () { controller.abort(); }, num(process.env.RL_REDIS_TIMEOUT_MS, 3000));
   var itens;
@@ -50,8 +45,33 @@ async function incrementar(url, token, chaves) {
   itens.forEach(function (item) {
     if (!item || item.error || !("result" in item)) throw new Error("upstash_comando_falhou");
   });
+  return itens;
+}
+
+// Exposto para o circuito por alias da automação P1 reusar a mesma chamada
+// REST (URL, token, timeout e validação do pipeline) em vez de abrir outro
+// cliente HTTP. Nunca decide sozinho: quem chama define o que fazer quando
+// `ok` é falso.
+export async function executarPipeline(comandos) {
+  // A integração Upstash da Vercel usa nomes KV; instalações manuais usam
+  // os nomes REST históricos. Aceitar ambos evita copiar segredo entre vars.
+  var url = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_KV_REST_API_URL;
+  var token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_KV_REST_API_TOKEN;
+  if (!url || !token) return { ok: false, motivo: "upstash_nao_configurado" };
+  try { return { ok: true, resultados: await chamarPipeline(url, token, comandos) }; }
+  catch (e) { return { ok: false, motivo: (e && e.message) || "upstash_falhou" }; }
+}
+
+async function incrementar(chaves) {
+  var comandos = [];
+  chaves.forEach(function (chave) {
+    comandos.push(["INCR", chave.nome]);
+    comandos.push(["EXPIRE", chave.nome, String(chave.ttl), "NX"]);
+  });
+  var pipeline = await executarPipeline(comandos);
+  if (!pipeline.ok) throw new Error(pipeline.motivo);
   return chaves.map(function (chave, i) {
-    var contagem = Number(itens[i * 2].result);
+    var contagem = Number(pipeline.resultados[i * 2].result);
     if (!Number.isFinite(contagem)) throw new Error("upstash_contagem_invalida");
     return { ...chave, contagem: contagem };
   });
@@ -63,13 +83,8 @@ function restante(ttl, agoraMs) {
 }
 
 async function consumir(chaves, agoraMs, falhaAberta) {
-  // A integração Upstash da Vercel usa nomes KV; instalações manuais usam
-  // os nomes REST históricos. Aceitar ambos evita copiar segredo entre vars.
-  var url = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_KV_REST_API_URL;
-  var token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_KV_REST_API_TOKEN;
-  if (!url || !token) return { permitido: falhaAberta, indisponivel: true, motivo: "upstash_nao_configurado" };
   var resultados;
-  try { resultados = await incrementar(url, token, chaves); }
+  try { resultados = await incrementar(chaves); }
   catch (e) { return { permitido: falhaAberta, indisponivel: true, motivo: (e && e.message) || "upstash_falhou" }; }
   for (var i = 0; i < resultados.length; i++) {
     if (Number.isFinite(resultados[i].contagem) && resultados[i].contagem > resultados[i].limite) {
@@ -86,6 +101,22 @@ export function consumirDatajud(req, agoraMs = Date.now()) {
     { nome: bucket("rl:datajud:glb:min", JANELA_MIN_S, agoraMs), ttl: JANELA_MIN_S, limite: num(process.env.RL_GLOBAL_MIN, 300), escopo: "global_minuto" },
     { nome: bucket("rl:datajud:glb:dia", JANELA_DIA_S, agoraMs), ttl: JANELA_DIA_S, limite: num(process.env.RL_GLOBAL_DIA, 2000), escopo: "global_dia" },
   ], agoraMs, true);
+}
+
+// A automação reserva 600 chamadas diárias ao DataJud: 480 de monitoramento e
+// 120 de saúde. Diferente de `consumirDatajud` (tráfego manual, fail-open por
+// desenho), estes contadores falham fechados: Redis fora do ar ou malformado
+// bloqueia a automação em vez de liberar chamada não contabilizada.
+export function consumirMonitoramento(agoraMs = Date.now()) {
+  return consumir([
+    { nome: bucket("rl:auto:monitoramento:dia", JANELA_DIA_S, agoraMs), ttl: JANELA_DIA_S, limite: num(process.env.RL_MONITORAMENTO_DIA, 480), escopo: "monitoramento_dia" },
+  ], agoraMs, false);
+}
+
+export function consumirSaude(agoraMs = Date.now()) {
+  return consumir([
+    { nome: bucket("rl:auto:saude:dia", JANELA_DIA_S, agoraMs), ttl: JANELA_DIA_S, limite: num(process.env.RL_SAUDE_DIA, 120), escopo: "saude_dia" },
+  ], agoraMs, false);
 }
 
 export function consumirLogin(req, agoraMs = Date.now()) {
