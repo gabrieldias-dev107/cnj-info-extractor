@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { response } from "./helpers/http.js";
 
+const USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const PORTFOLIO_ID = "11111111-1111-4111-8111-111111111111";
+const PROBE_ID = "77777777-7777-4777-8777-777777777777";
+const PROBE_NOVO_ID = "88888888-8888-4888-8888-888888888888";
+
 const estado = {
-  usuario: { id: "user-1", email: "criador@btblue.com.br" },
+  usuario: { id: USER_ID, email: "criador@btblue.com.br" },
   ssoLigado: true,
-  portfolio: { id: "portfolio-1", nome: "Alfa", papel: "criador" },
-  probes: [{ id: "probe-1", alias: "api_publica_tjsp", intervaloMinutos: 60, proximaConsultaEm: "2026-09-01T12:00:00.000Z" }],
-  criado: { id: "probe-2", alias: "api_publica_tjmg", intervaloMinutos: 30 },
+  portfolio: { id: PORTFOLIO_ID, nome: "Alfa", papel: "criador" },
+  probes: [{ id: PROBE_ID, alias: "api_publica_tjsp", intervalo_minutos: 60, proxima_consulta_em: "2026-09-01T12:00:00.000Z" }],
+  criado: { id: PROBE_NOVO_ID, alias: "api_publica_tjmg", intervalo_minutos: 30, proxima_consulta_em: "2026-09-01T10:30:00.000Z" },
   removido: true,
 };
 const chamadas = [];
@@ -33,9 +38,9 @@ async function handler() {
 }
 
 function reiniciar() {
-  estado.usuario = { id: "user-1", email: "criador@btblue.com.br" };
+  estado.usuario = { id: USER_ID, email: "criador@btblue.com.br" };
   estado.ssoLigado = true;
-  estado.portfolio = { id: "portfolio-1", nome: "Alfa", papel: "criador" };
+  estado.portfolio = { id: PORTFOLIO_ID, nome: "Alfa", papel: "criador" };
   estado.removido = true;
   chamadas.length = 0;
 }
@@ -45,37 +50,37 @@ test("criador cria, atualiza e exclui probes de saúde do próprio portfólio", 
   const probes = await handler();
 
   const criar = response();
-  await probes({ method: "POST", headers, body: { portfolioId: "portfolio-1", alias: "api_publica_tjmg", intervaloMinutos: 30 } }, criar);
+  await probes({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, alias: "api_publica_tjmg", intervaloMinutos: 30 } }, criar);
   assert.equal(criar.statusCode, 201);
-  assert.deepEqual(criar.body, estado.criado);
+  assert.deepEqual(criar.body, { id: PROBE_NOVO_ID, alias: "api_publica_tjmg", intervaloMinutos: 30, proximaConsultaEm: "2026-09-01T10:30:00.000Z" });
 
   const atualizar = response();
-  await probes({ method: "PATCH", headers, body: { portfolioId: "portfolio-1", id: "probe-2", intervaloMinutos: 45 } }, atualizar);
+  await probes({ method: "PATCH", headers, body: { portfolioId: PORTFOLIO_ID, id: PROBE_NOVO_ID, intervaloMinutos: 45 } }, atualizar);
   assert.equal(atualizar.statusCode, 200);
-  assert.deepEqual(atualizar.body, estado.criado);
+  assert.deepEqual(atualizar.body, { id: PROBE_NOVO_ID, alias: "api_publica_tjmg", intervaloMinutos: 30, proximaConsultaEm: "2026-09-01T10:30:00.000Z" });
 
   const excluir = response();
-  await probes({ method: "DELETE", headers, query: { portfolioId: "portfolio-1", id: "probe-2" } }, excluir);
+  await probes({ method: "DELETE", headers, query: { portfolioId: PORTFOLIO_ID, id: PROBE_NOVO_ID } }, excluir);
   assert.equal(excluir.statusCode, 204);
   assert.deepEqual(chamadas.filter(([nome]) => nome !== "portfolioForUser"), [
-    ["createHealthProbe", "portfolio-1", "user-1", { alias: "api_publica_tjmg", intervaloMinutos: 30 }],
-    ["updateHealthProbeForCreator", "portfolio-1", "probe-2", "user-1", { intervaloMinutos: 45 }],
-    ["deleteHealthProbeForCreator", "portfolio-1", "probe-2", "user-1"],
+    ["createHealthProbe", PORTFOLIO_ID, USER_ID, { alias: "api_publica_tjmg", intervaloMinutos: 30 }],
+    ["updateHealthProbeForCreator", PORTFOLIO_ID, PROBE_NOVO_ID, USER_ID, { intervaloMinutos: 45 }],
+    ["deleteHealthProbeForCreator", PORTFOLIO_ID, PROBE_NOVO_ID, USER_ID],
   ]);
 });
 
 test("membro lê probes mas mutação recebe o mesmo 404 de portfólio oculto", async () => {
   reiniciar();
-  estado.portfolio = { id: "portfolio-1", nome: "Alfa", papel: "membro" };
+  estado.portfolio = { id: PORTFOLIO_ID, nome: "Alfa", papel: "membro" };
   const probes = await handler();
 
   const listar = response();
-  await probes({ method: "GET", headers, query: { portfolioId: "portfolio-1" } }, listar);
+  await probes({ method: "GET", headers, query: { portfolioId: PORTFOLIO_ID } }, listar);
   assert.equal(listar.statusCode, 200);
-  assert.deepEqual(listar.body, { probes: estado.probes });
+  assert.deepEqual(listar.body, { probes: [{ id: PROBE_ID, alias: "api_publica_tjsp", intervaloMinutos: 60, proximaConsultaEm: "2026-09-01T12:00:00.000Z" }] });
 
   const mutar = response();
-  await probes({ method: "POST", headers, body: { portfolioId: "portfolio-1", alias: "api_publica_tjmg", intervaloMinutos: 30 } }, mutar);
+  await probes({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, alias: "api_publica_tjmg", intervaloMinutos: 30 } }, mutar);
   assert.equal(mutar.statusCode, 404);
   assert.deepEqual(mutar.body, { error: "portfolio_nao_encontrado" });
 });
@@ -85,13 +90,34 @@ test("probe inválido falha antes do banco e origem cruzada continua bloqueada",
   const probes = await handler();
 
   const invalido = response();
-  await probes({ method: "POST", headers, body: { portfolioId: "portfolio-1", alias: "tjsp", intervaloMinutos: 0 } }, invalido);
+  await probes({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, alias: "tjsp", intervaloMinutos: 0 } }, invalido);
   assert.equal(invalido.statusCode, 400);
   assert.deepEqual(invalido.body, { error: "probe_invalido" });
   assert.deepEqual(chamadas, []);
 
   const cruzada = response();
-  await probes({ method: "GET", headers: { host: "app.vercel.app", origin: "https://outro.example" }, query: { portfolioId: "portfolio-1" } }, cruzada);
+  await probes({ method: "GET", headers: { host: "app.vercel.app", origin: "https://outro.example" }, query: { portfolioId: PORTFOLIO_ID } }, cruzada);
   assert.equal(cruzada.statusCode, 403);
   assert.deepEqual(cruzada.body, { error: "origem_nao_permitida" });
+});
+
+test("probe rejeita UUID malformado e intervalo que não seja número JSON inteiro até 1440", async () => {
+  reiniciar();
+  const probes = await handler();
+
+  const portfolioInvalido = response();
+  await probes({ method: "GET", headers, query: { portfolioId: "portfolio-invalido" } }, portfolioInvalido);
+  assert.equal(portfolioInvalido.statusCode, 400);
+
+  const probeInvalido = response();
+  await probes({ method: "PATCH", headers, body: { portfolioId: PORTFOLIO_ID, id: "probe-invalido", intervaloMinutos: 30 } }, probeInvalido);
+  assert.equal(probeInvalido.statusCode, 400);
+
+  for (const intervaloMinutos of ["30", 30.5, Number.POSITIVE_INFINITY, 1441]) {
+    const res = response();
+    await probes({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, alias: "api_publica_tjmg", intervaloMinutos } }, res);
+    assert.equal(res.statusCode, 400, "intervalo inválido: " + String(intervaloMinutos));
+  }
+
+  assert.deepEqual(chamadas, []);
 });
