@@ -158,3 +158,151 @@ export async function purgeExpired() {
   await db.query("DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'");
   await db.query("DELETE FROM users WHERE last_login_at < now() - interval '180 days'");
 }
+
+function p1ExpiresAt() {
+  return new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
+}
+
+export async function createPortfolio(userId, { nome }) {
+  const rows = await sql().query(
+    "INSERT INTO portfolios (id,creator_user_id,nome,expires_at) VALUES ($1,$2,$3,$4) RETURNING id,nome,created_at,updated_at,expires_at,'criador' AS papel",
+    [randomUUID(), userId, nome, p1ExpiresAt()]
+  );
+  return rows[0] || null;
+}
+
+export async function portfoliosForUser(userId) {
+  return sql().query(
+    "SELECT p.id,p.nome,p.created_at,p.updated_at,p.expires_at,CASE WHEN p.creator_user_id=$1 THEN 'criador' ELSE 'membro' END AS papel FROM portfolios p LEFT JOIN portfolio_members pm ON pm.portfolio_id=p.id AND pm.user_id=$1 AND pm.expires_at > now() WHERE p.expires_at > now() AND (p.creator_user_id=$1 OR pm.user_id=$1) ORDER BY p.updated_at DESC",
+    [userId]
+  );
+}
+
+// Este SELECT é a fronteira de leitura compartilhada: quem não é criador nem
+// membro ativo recebe o mesmo resultado vazio de um id inexistente.
+export async function portfolioForUser(portfolioId, userId) {
+  const rows = await sql().query(
+    "SELECT p.id,p.nome,CASE WHEN p.creator_user_id=$2 THEN 'criador' ELSE 'membro' END AS papel FROM portfolios p LEFT JOIN portfolio_members pm ON pm.portfolio_id=p.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE p.id=$1 AND p.expires_at > now() AND (p.creator_user_id=$2 OR pm.user_id=$2) LIMIT 1",
+    [portfolioId, userId]
+  );
+  return rows[0] || null;
+}
+
+export async function updatePortfolioForCreator(portfolioId, userId, { nome }) {
+  const rows = await sql().query(
+    "UPDATE portfolios SET nome=$3,updated_at=now() WHERE id=$1 AND creator_user_id=$2 AND expires_at > now() RETURNING id,nome,created_at,updated_at,expires_at,'criador' AS papel",
+    [portfolioId, userId, nome]
+  );
+  return rows[0] || null;
+}
+
+export async function deletePortfolioForCreator(portfolioId, userId) {
+  const rows = await sql().query(
+    "DELETE FROM portfolios WHERE id=$1 AND creator_user_id=$2 AND expires_at > now() RETURNING id",
+    [portfolioId, userId]
+  );
+  return Boolean(rows[0]);
+}
+
+export async function portfolioItemsForUser(portfolioId, userId) {
+  return sql().query(
+    "SELECT mp.id,mp.process_id,mp.intervalo_minutos,mp.proxima_consulta_em,p.numero,p.alias FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=po.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE mp.portfolio_id=$1 AND mp.expires_at > now() AND po.expires_at > now() AND (po.creator_user_id=$2 OR pm.user_id=$2) ORDER BY mp.created_at DESC",
+    [portfolioId, userId]
+  );
+}
+
+export async function createPortfolioItem(portfolioId, userId, { processId, intervaloMinutos }) {
+  const now = new Date();
+  const rows = await sql().query(
+    "INSERT INTO monitored_processes (id,portfolio_id,process_id,intervalo_minutos,proxima_consulta_em,expires_at) SELECT $1,$2,p.id,$4,$5,$6 FROM portfolios po JOIN processes p ON p.id=$3 WHERE po.id=$2 AND po.creator_user_id=$7 AND po.expires_at > now() RETURNING id,process_id,intervalo_minutos,proxima_consulta_em",
+    [randomUUID(), portfolioId, processId, intervaloMinutos, now, p1ExpiresAt(), userId]
+  );
+  return rows[0] || null;
+}
+
+export async function updatePortfolioItemForCreator(portfolioId, itemId, userId, { intervaloMinutos }) {
+  const rows = await sql().query(
+    "UPDATE monitored_processes mp SET intervalo_minutos=$4,proxima_consulta_em=now() WHERE mp.id=$2 AND mp.portfolio_id=$1 AND mp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios po WHERE po.id=mp.portfolio_id AND po.creator_user_id=$3 AND po.expires_at > now()) RETURNING id,process_id,intervalo_minutos,proxima_consulta_em",
+    [portfolioId, itemId, userId, intervaloMinutos]
+  );
+  return rows[0] || null;
+}
+
+export async function deletePortfolioItemForCreator(portfolioId, itemId, userId) {
+  const rows = await sql().query(
+    "DELETE FROM monitored_processes mp WHERE mp.id=$2 AND mp.portfolio_id=$1 AND mp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios po WHERE po.id=mp.portfolio_id AND po.creator_user_id=$3 AND po.expires_at > now()) RETURNING id",
+    [portfolioId, itemId, userId]
+  );
+  return Boolean(rows[0]);
+}
+
+export async function portfolioMembersForUser(portfolioId, userId) {
+  return sql().query(
+    "SELECT u.id,u.email,pm.created_at,pm.expires_at FROM portfolio_members pm JOIN users u ON u.id=pm.user_id JOIN portfolios p ON p.id=pm.portfolio_id LEFT JOIN portfolio_members acesso ON acesso.portfolio_id=p.id AND acesso.user_id=$2 AND acesso.expires_at > now() WHERE pm.portfolio_id=$1 AND pm.expires_at > now() AND p.expires_at > now() AND (p.creator_user_id=$2 OR acesso.user_id=$2) ORDER BY u.email",
+    [portfolioId, userId]
+  );
+}
+
+export async function addPortfolioMemberForCreator(portfolioId, userId, { email }) {
+  const rows = await sql().query(
+    "INSERT INTO portfolio_members (portfolio_id,user_id,expires_at) SELECT $1,u.id,$4 FROM portfolios p JOIN users u ON lower(u.email)=lower($3) WHERE p.id=$1 AND p.creator_user_id=$2 AND p.expires_at > now() AND u.id <> p.creator_user_id ON CONFLICT (portfolio_id,user_id) DO UPDATE SET expires_at=EXCLUDED.expires_at RETURNING user_id AS id,(SELECT email FROM users WHERE id=user_id) AS email",
+    [portfolioId, userId, email, p1ExpiresAt()]
+  );
+  return rows[0] || null;
+}
+
+export async function deletePortfolioMemberForCreator(portfolioId, memberUserId, userId) {
+  const rows = await sql().query(
+    "DELETE FROM portfolio_members pm USING portfolios p WHERE pm.portfolio_id=$1 AND pm.user_id=$2 AND p.id=pm.portfolio_id AND p.creator_user_id=$3 AND p.expires_at > now() RETURNING pm.user_id AS id",
+    [portfolioId, memberUserId, userId]
+  );
+  return Boolean(rows[0]);
+}
+
+// O primeiro SELECT prova o vínculo a um item monitorado. Só então buscamos
+// snapshots reduzidos, sem `dados` do DataJud, para não ampliar o contrato.
+export async function processHistoryForUser(numero, userId) {
+  const db = sql();
+  const acessiveis = await db.query(
+    "SELECT mp.id FROM monitored_processes mp JOIN processes p ON p.id=mp.process_id JOIN portfolios po ON po.id=mp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=po.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE p.numero=$1 AND mp.expires_at > now() AND po.expires_at > now() AND (po.creator_user_id=$2 OR pm.user_id=$2) ORDER BY mp.created_at DESC LIMIT 1",
+    [numero, userId]
+  );
+  if (!acessiveis[0]) return null;
+  const snapshots = await db.query(
+    "SELECT s.id,s.consultado_em,s.estagio,s.estagio_codigo,s.estagio_data,s.tpu_versao FROM snapshots s JOIN monitored_processes mp ON mp.process_id=s.process_id WHERE mp.id=$1 AND s.expira_em > now() ORDER BY s.consultado_em DESC",
+    [acessiveis[0].id]
+  );
+  return { snapshots };
+}
+
+export async function healthProbesForUser(portfolioId, userId) {
+  return sql().query(
+    "SELECT hp.id,hp.alias,hp.intervalo_minutos,hp.proxima_consulta_em FROM health_probes hp JOIN portfolios p ON p.id=hp.portfolio_id LEFT JOIN portfolio_members pm ON pm.portfolio_id=p.id AND pm.user_id=$2 AND pm.expires_at > now() WHERE hp.portfolio_id=$1 AND hp.expires_at > now() AND p.expires_at > now() AND (p.creator_user_id=$2 OR pm.user_id=$2) ORDER BY hp.created_at DESC",
+    [portfolioId, userId]
+  );
+}
+
+export async function createHealthProbe(portfolioId, userId, { alias, intervaloMinutos }) {
+  const now = new Date();
+  const rows = await sql().query(
+    "INSERT INTO health_probes (id,portfolio_id,alias,intervalo_minutos,proxima_consulta_em,expires_at) SELECT $1,$2,$4,$5,$6,$7 FROM portfolios WHERE id=$2 AND creator_user_id=$3 AND expires_at > now() RETURNING id,alias,intervalo_minutos,proxima_consulta_em",
+    [randomUUID(), portfolioId, userId, alias, intervaloMinutos, now, p1ExpiresAt()]
+  );
+  return rows[0] || null;
+}
+
+export async function updateHealthProbeForCreator(portfolioId, probeId, userId, { alias = null, intervaloMinutos }) {
+  const rows = await sql().query(
+    "UPDATE health_probes hp SET alias=COALESCE($4,hp.alias),intervalo_minutos=$5,proxima_consulta_em=now() WHERE hp.id=$2 AND hp.portfolio_id=$1 AND hp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios p WHERE p.id=hp.portfolio_id AND p.creator_user_id=$3 AND p.expires_at > now()) RETURNING id,alias,intervalo_minutos,proxima_consulta_em",
+    [portfolioId, probeId, userId, alias, intervaloMinutos]
+  );
+  return rows[0] || null;
+}
+
+export async function deleteHealthProbeForCreator(portfolioId, probeId, userId) {
+  const rows = await sql().query(
+    "DELETE FROM health_probes hp WHERE hp.id=$2 AND hp.portfolio_id=$1 AND hp.expires_at > now() AND EXISTS (SELECT 1 FROM portfolios p WHERE p.id=hp.portfolio_id AND p.creator_user_id=$3 AND p.expires_at > now()) RETURNING id",
+    [portfolioId, probeId, userId]
+  );
+  return Boolean(rows[0]);
+}

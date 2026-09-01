@@ -41,7 +41,8 @@ function neonFake() {
 
 mock.module("@neondatabase/serverless", { namedExports: { neon: () => neonFake() } });
 
-const { claimBatchItem, createBatch, finishBatchItem, freshSnapshot, persistSnapshot, purgeExpired } = await import("../../server/db.js");
+const db = await import("../../server/db.js");
+const { claimBatchItem, createBatch, finishBatchItem, freshSnapshot, persistSnapshot, purgeExpired } = db;
 
 function reiniciar(roteiro = []) {
   consultas.length = 0;
@@ -208,4 +209,81 @@ test("lote sem nenhum item pendente já nasce concluído", async () => {
     { linha: 1, numero: "123", alias: null, status: "invalido", erro: "numero_invalido" },
   ]);
   assert.equal(consultas[0].parametros[2], "concluido");
+});
+
+test("funções P1 de portfólio existem para isolar leitura de membro e mutação de criador", async () => {
+  for (const nome of [
+    "createPortfolio", "portfoliosForUser", "portfolioForUser", "updatePortfolioForCreator", "deletePortfolioForCreator",
+    "portfolioItemsForUser", "createPortfolioItem", "updatePortfolioItemForCreator", "deletePortfolioItemForCreator",
+    "portfolioMembersForUser", "addPortfolioMemberForCreator", "deletePortfolioMemberForCreator",
+  ]) {
+    assert.equal(typeof db[nome], "function", "db." + nome + " precisa existir");
+  }
+});
+
+test("portfolioForUser usa escopo de criador ou membro ativo e nunca concatena identificadores", async () => {
+  assert.equal(typeof db.portfolioForUser, "function", "db.portfolioForUser precisa existir");
+  reiniciar([[{ id: "portfolio-1", nome: "Alfa", papel: "membro" }]]);
+
+  const portfolio = await db.portfolioForUser("portfolio-1", "user-2");
+
+  assert.deepEqual(portfolio, { id: "portfolio-1", nome: "Alfa", papel: "membro" });
+  const consulta = textos()[0];
+  assert.match(consulta, /FROM portfolios p/);
+  assert.match(consulta, /portfolio_members pm/);
+  assert.match(consulta, /p\.creator_user_id=\$2/);
+  assert.match(consulta, /pm\.user_id=\$2/);
+  assert.match(consulta, /p\.expires_at > now\(\)/);
+  assert.match(consulta, /pm\.expires_at > now\(\)/);
+  assert.deepEqual(consultas[0].parametros, ["portfolio-1", "user-2"]);
+});
+
+test("mutação de portfólio filtra o criador no próprio UPDATE parametrizado", async () => {
+  assert.equal(typeof db.updatePortfolioForCreator, "function", "db.updatePortfolioForCreator precisa existir");
+  reiniciar([[{ id: "portfolio-1", nome: "Novo nome", papel: "criador" }]]);
+
+  const atualizado = await db.updatePortfolioForCreator("portfolio-1", "user-1", { nome: "Novo nome" });
+
+  assert.equal(atualizado.nome, "Novo nome");
+  const consulta = textos()[0];
+  assert.match(consulta, /UPDATE portfolios SET nome=\$3,updated_at=now\(\)/);
+  assert.match(consulta, /WHERE id=\$1 AND creator_user_id=\$2 AND expires_at > now\(\)/);
+  assert.deepEqual(consultas[0].parametros, ["portfolio-1", "user-1", "Novo nome"]);
+});
+
+test("histórico exige item acessível do portfólio e seleciona somente colunas seguras de snapshot", async () => {
+  assert.equal(typeof db.processHistoryForUser, "function", "db.processHistoryForUser precisa existir");
+  reiniciar([
+    [{ id: "monitor-1" }],
+    [{ id: "snap-1", consultado_em: "2026-09-01T10:00:00.000Z", estagio: "expedicao_alvara", estagio_codigo: 12548, estagio_data: "2026-09-01T09:00:00.000Z", tpu_versao: VERSAO_TPU }],
+  ]);
+
+  const historico = await db.processHistoryForUser("00013278820188260344", "user-2");
+
+  assert.equal(historico.snapshots.length, 1);
+  assert.match(textos()[0], /monitored_processes mp/);
+  assert.match(textos()[0], /portfolio_members pm/);
+  assert.match(textos()[0], /p\.numero=\$1/);
+  assert.match(textos()[0], /po\.creator_user_id=\$2/);
+  assert.deepEqual(consultas[0].parametros, ["00013278820188260344", "user-2"]);
+  assert.match(textos()[1], /SELECT s\.id,s\.consultado_em,s\.estagio,s\.estagio_codigo,s\.estagio_data,s\.tpu_versao/);
+  assert.equal(textos()[1].includes("s.dados"), false, "o histórico não deve trazer o payload bruto do DataJud");
+  assert.deepEqual(consultas[1].parametros, ["monitor-1"]);
+});
+
+test("health probe é inserido apenas por criador e com valores parametrizados", async () => {
+  assert.equal(typeof db.createHealthProbe, "function", "db.createHealthProbe precisa existir");
+  reiniciar([[{ id: "probe-1", alias: "api_publica_tjsp", intervalo_minutos: 60 }]]);
+
+  const probe = await db.createHealthProbe("portfolio-1", "user-1", { alias: "api_publica_tjsp", intervaloMinutos: 60 });
+
+  assert.equal(probe.id, "probe-1");
+  const consulta = textos()[0];
+  assert.match(consulta, /INSERT INTO health_probes/);
+  assert.match(consulta, /SELECT \$1,\$2,\$4,\$5,\$6,\$7 FROM portfolios/);
+  assert.match(consulta, /WHERE id=\$2 AND creator_user_id=\$3 AND expires_at > now\(\)/);
+  assert.equal(consultas[0].parametros[1], "portfolio-1");
+  assert.equal(consultas[0].parametros[2], "user-1");
+  assert.equal(consultas[0].parametros[3], "api_publica_tjsp");
+  assert.equal(consultas[0].parametros[4], 60);
 });
