@@ -77,6 +77,12 @@
   var historicoForm, historicoNumero, historicoStatus, historicoResultado;
   var sequenciaId = 0;
 
+  // Células da coluna "Sinal nesta sessão" desenhadas agora, uma por sonda.
+  // Guardá-las permite trocar só o sinal quando uma consulta observa o tribunal,
+  // em vez de redesenhar o painel inteiro por cima do que o criador está
+  // digitando num formulário. Recriada a cada render do detalhe.
+  var celulasSinal = [];
+
   // --- helpers de DOM ---------------------------------------------------------
 
   function el(tag, className, texto) {
@@ -215,10 +221,18 @@
     if (!alias) return;
     if (codigo && !ESTADO_TRIBUNAL[String(codigo)]) return;
     estado.saudePorAlias[String(alias)] = { codigo: codigo || null };
-    // Só redesenha se a carteira aberta tiver sonda desse índice: redesenhar o
-    // detalhe inteiro apagaria o que o usuário estivesse digitando num formulário.
-    var afetada = estado.probes.some(function (probe) { return String(probe.alias) === String(alias); });
-    if (estado.selecionado && afetada) renderDetalhe();
+    atualizarCelulasSinal(String(alias));
+  }
+
+  // Troca só o conteúdo da célula do sinal. Redesenhar o detalhe inteiro aqui
+  // destruiria os formulários abertos junto com o que o criador tivesse
+  // digitado neles — e uma consulta online pode acontecer a qualquer momento.
+  function atualizarCelulasSinal(alias) {
+    celulasSinal.forEach(function (registro) {
+      if (String(registro.alias) !== alias) return;
+      limpar(registro.celula);
+      registro.celula.appendChild(sinalDoTribunal(alias));
+    });
   }
 
   function estadoTribunal(alias) {
@@ -382,21 +396,38 @@
     });
   }
 
+  // A carteira só vira a selecionada depois que as três listas chegam. Trocar
+  // antes deixaria o painel com o título de uma carteira, as linhas de outra e
+  // botões mirando ids que não são daquela carteira — o servidor recusa, mas o
+  // usuário vê "sem acesso" numa carteira que é dele.
   async function selecionarPortfolio(portfolio) {
-    estado.selecionado = portfolio;
-    renderListaPortfolios();
-    definirStatus(portfoliosStatus, "");
+    definirStatus(portfoliosStatus, "Carregando carteira…");
+    var itens, membros, probes;
     try {
-      var itens = await api().listarItens(portfolio.id);
-      var membros = await api().listarMembros(portfolio.id);
-      var probes = await api().listarProbes(portfolio.id);
-      estado.itens = itens.itens || [];
-      estado.membros = membros.membros || [];
-      estado.probes = probes.probes || [];
-      renderDetalhe();
+      itens = await api().listarItens(portfolio.id);
+      membros = await api().listarMembros(portfolio.id);
+      probes = await api().listarProbes(portfolio.id);
     } catch (erro) {
+      if (!estado.selecionado || estado.selecionado.id !== portfolio.id) descartarDetalhe();
       tratarFalha(erro, portfoliosStatus, true);
+      return;
     }
+    estado.selecionado = portfolio;
+    estado.itens = itens.itens || [];
+    estado.membros = membros.membros || [];
+    estado.probes = probes.probes || [];
+    definirStatus(portfoliosStatus, "");
+    renderListaPortfolios();
+    renderDetalhe();
+  }
+
+  function descartarDetalhe() {
+    estado.selecionado = null;
+    estado.itens = [];
+    estado.membros = [];
+    estado.probes = [];
+    renderListaPortfolios();
+    renderDetalhe();
   }
 
   async function recarregarSelecionado() {
@@ -410,6 +441,7 @@
   function renderDetalhe() {
     if (!portfolioDetalhe) return;
     limpar(portfolioDetalhe);
+    celulasSinal = [];
     if (!estado.selecionado) {
       portfolioDetalhe.hidden = true;
       return;
@@ -612,6 +644,51 @@
     return bloco;
   }
 
+  // --- monitorar o processo recém-consultado ----------------------------------
+
+  // O momento natural de dizer "acompanhe este processo" é logo depois de
+  // encontrá-lo. `processId` vem da resposta de /api/datajud — o mesmo campo
+  // que `POST /api/portfolios/items` exige e que nenhuma outra tela produz.
+  // Devolve null só quando não há processo persistido (modo sem SSO).
+  function blocoMonitorar(processId) {
+    if (!processId) return null;
+    var bloco = el("div", "p1-monitorar-acao");
+
+    if (!estado.selecionado) {
+      bloco.appendChild(el("span", "consulta-nota",
+        "Abra uma carteira sua em “Carteiras monitoradas” para acompanhar este processo."));
+      return bloco;
+    }
+    if (!ehCriador()) {
+      bloco.appendChild(el("span", "consulta-nota",
+        "Só o criador da carteira “" + estado.selecionado.nome + "” pode incluir processos nela."));
+      return bloco;
+    }
+
+    var acao = botao("p1-monitorar", "Monitorar em “" + estado.selecionado.nome + "”");
+    acao.addEventListener("click", async function () {
+      var carteira = estado.selecionado;
+      acao.disabled = true;
+      try {
+        await api().adicionarItem(carteira.id, processId, INTERVALO_PADRAO_MINUTOS);
+        limpar(bloco);
+        bloco.appendChild(el("span", "consulta-nota",
+          "Processo incluído no monitoramento de “" + carteira.nome + "”, com reconsulta diária. O intervalo pode ser ajustado na carteira."));
+        await recarregarSelecionado();
+      } catch (erro) {
+        acao.disabled = false;
+        var aviso = el("span", "p1-monitorar-erro");
+        var codigo = (erro && erro.message) || "erro_servidor";
+        aviso.textContent = codigo === "autenticacao_sso" || codigo === "autenticacao_necessaria"
+          ? mensagemErro("autenticacao_necessaria")
+          : mensagemErro(codigo);
+        bloco.appendChild(aviso);
+      }
+    });
+    bloco.appendChild(acao);
+    return bloco;
+  }
+
   // --- sondas de saúde --------------------------------------------------------
 
   function secaoProbes() {
@@ -630,7 +707,7 @@
         celula(linha, numeroLegivel(probe.numero || ""), "p1-numero");
         celula(linha, probe.alias || "—");
         celula(linha, String(probe.intervaloMinutos || "—"));
-        celula(linha, sinalDoTribunal(probe.alias));
+        celulasSinal.push({ alias: probe.alias, celula: celula(linha, sinalDoTribunal(probe.alias)) });
         if (ehCriador()) {
           var acoes = el("td");
           var remover = botao("p1-remover-probe", "Remover");
@@ -809,6 +886,8 @@
     buscarGlossario: buscarGlossario,
     rotuloEstagio: rotuloEstagio,
     blocoSugestoes: blocoSugestoes,
+    blocoMonitorar: blocoMonitorar,
+    recarregarCarteiras: function () { return carregarPortfolios(false); },
     mensagemP1: mensagemP1,
     mensagemErro: mensagemErro,
     classificarTribunal: classificarTribunal,

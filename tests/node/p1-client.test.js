@@ -357,3 +357,89 @@ test("nome de carteira e e-mail hostis chegam ao DOM como texto puro", async () 
   assert.equal(achar(detalhe, (no) => no.tagName === "IMG"), null);
   assert.equal(global.pwned, undefined);
 });
+
+// --- correções da revisão, round 1 ------------------------------------------
+
+test("sinal de tribunal atualiza a célula sem apagar o que o criador digita", async () => {
+  const { document, ui } = interfaceP1(apiFalsa({
+    listarProbes: async () => ({ probes: [{ id: "dd", numero: "00013278820188260344", alias: "api_publica_tjsp", intervaloMinutos: 1440 }] }),
+  }));
+
+  const detalhe = await abrirCarteira(document);
+  const formProbe = achar(detalhe, (no) => no.className === "p1-form-probe");
+  const rascunho = todos(formProbe, (no) => no.tagName === "INPUT")[0];
+  rascunho.value = "0001327-88.2018.8.26";
+
+  ui.registrarEstadoTribunal("api_publica_tjsp", "cota_excedida");
+
+  assert.equal(rascunho.value, "0001327-88.2018.8.26", "o rascunho do criador não pode ser descartado");
+  const sinal = achar(document.getElementById("portfolio-detalhe"), (no) => no.className === "p1-sinal-tribunal");
+  assert.match(sinal.textContent, /Degradado/);
+  // O nó do formulário continua sendo o mesmo: não houve re-render do painel.
+  assert.equal(achar(document.getElementById("portfolio-detalhe"), (no) => no.className === "p1-form-probe"), formProbe);
+});
+
+test("falha ao abrir outra carteira não deixa a anterior na tela", async () => {
+  const outra = { id: "99999999-9999-4999-8999-999999999999", nome: "Carteira instável", papel: "criador" };
+  let alvo = null;
+  const { document } = interfaceP1(apiFalsa({
+    listarPortfolios: async () => ({ portfolios: [CARTEIRA_CRIADOR, outra] }),
+    listarItens: async (id) => {
+      alvo = id;
+      if (id === outra.id) throw new Error("portfolio_indisponivel");
+      return { itens: [{ id: "aa", numero: "00013278820188260344", intervaloMinutos: 60 }] };
+    },
+  }));
+
+  const detalhe = await abrirCarteira(document, 0);
+  assert.match(detalhe.textContent, /Recuperação SP/);
+
+  const botoes = todos(document.getElementById("portfolios-lista"), (no) => no.className === "p1-portfolio-btn");
+  await botoes[1].click();
+  await assentar();
+
+  assert.equal(alvo, outra.id);
+  assert.equal(document.getElementById("portfolio-detalhe").textContent, "",
+    "nenhuma carteira pode continuar desenhada depois de uma troca que falhou");
+  assert.match(document.getElementById("portfolios-status").textContent, /indispon/i);
+});
+
+test("consulta bem-sucedida vira ação de monitorar na carteira aberta", async () => {
+  const incluidos = [];
+  const { document, ui } = interfaceP1(apiFalsa({
+    adicionarItem: async (portfolioId, processId, intervaloMinutos) => {
+      incluidos.push([portfolioId, processId, intervaloMinutos]);
+      return { id: "novo" };
+    },
+  }));
+
+  // Sem carteira aberta o bloco explica o que falta, em vez de sumir calado.
+  const semCarteira = ui.blocoMonitorar("44444444-4444-4444-8444-444444444444");
+  assert.ok(semCarteira);
+  assert.equal(achar(semCarteira, (no) => no.className === "p1-monitorar"), null);
+  assert.match(semCarteira.textContent, /carteira/i);
+
+  // Sem processId (modo sem SSO) não há o que monitorar.
+  assert.equal(ui.blocoMonitorar(null), null);
+
+  await abrirCarteira(document);
+  const bloco = ui.blocoMonitorar("44444444-4444-4444-8444-444444444444");
+  const acao = achar(bloco, (no) => no.className === "p1-monitorar");
+  assert.ok(acao);
+  assert.match(acao.textContent, /Recuperação SP/);
+
+  await acao.click();
+  await assentar();
+  assert.deepEqual(incluidos, [[CARTEIRA_CRIADOR.id, "44444444-4444-4444-8444-444444444444", 1440]]);
+  assert.match(bloco.textContent, /monitoramento/i);
+});
+
+test("membro não recebe ação de monitorar: só o criador inclui processos", async () => {
+  const { document, ui } = interfaceP1(apiFalsa({
+    listarPortfolios: async () => ({ portfolios: [CARTEIRA_MEMBRO] }),
+  }));
+  await abrirCarteira(document);
+  const bloco = ui.blocoMonitorar("44444444-4444-4444-8444-444444444444");
+  assert.equal(achar(bloco, (no) => no.className === "p1-monitorar"), null);
+  assert.match(bloco.textContent, /criador/i);
+});

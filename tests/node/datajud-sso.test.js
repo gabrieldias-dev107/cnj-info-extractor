@@ -102,6 +102,36 @@ test("resposta fresca e resposta de cache têm o mesmo formato de estágio", asy
   assert.deepEqual(Object.keys(fresca.body.estagio).sort(), Object.keys(cacheada.body.estagio).sort());
 });
 
+// Sem o identificador do processo na resposta, quem consulta um número não tem
+// como incluí-lo numa carteira: `POST /api/portfolios/items` exige o processId,
+// e nenhuma outra rota o devolve. As três saídas de sucesso precisam levá-lo,
+// inclusive a do cache do servidor — que é a que responde quase sempre.
+test("resposta de sucesso com SSO ligado carrega o processId do processo", async () => {
+  reiniciar();
+  const vazia = await executar();
+  assert.equal(vazia.statusCode, 200);
+  assert.equal(vazia.body.encontrado, false);
+  assert.equal(vazia.body.processId, "proc-1");
+
+  reiniciar();
+  const achada = await executar({
+    fetchImpl: async () => jsonResponse(200, { hits: { hits: [{ _source: { numeroProcesso: NUMERO, grau: "G1", movimentos: [] } }] } }),
+  });
+  assert.equal(achada.body.encontrado, true);
+  assert.equal(achada.body.processId, "proc-1");
+
+  reiniciar();
+  estado.emCache = async () => ({
+    id: "snap-antigo",
+    processId: "proc-do-cache",
+    dados: { encontrado: true, total: 1, processos: [{ numeroProcesso: NUMERO }] },
+    estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" },
+  });
+  const cacheada = await executar();
+  assert.equal(cacheada.body.cache, "servidor");
+  assert.equal(cacheada.body.processId, "proc-do-cache", "o cache do servidor não pode esconder o identificador");
+});
+
 test("alias forjado é recusado antes de qualquer rede, mesmo com sessão SSO", async () => {
   reiniciar();
   let chamadas = 0;

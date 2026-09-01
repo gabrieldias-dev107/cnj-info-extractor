@@ -311,3 +311,44 @@ test("falha do tribunal na consulta vira sinal de saúde para as sondas", async 
   assert.equal(global.P1Ui.estadoTribunal("api_publica_tjsp"), "tribunal_indisponivel");
   assert.match(document.getElementById("resultado-online").textContent, /tribunal está indisponível/i);
 });
+
+test("resultado da consulta online oferece monitorar o processo encontrado", async () => {
+  const document = documentoFake();
+  const incluidos = [];
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({
+      encontrado: true,
+      total: 1,
+      processId: "44444444-4444-4444-8444-444444444444",
+      processos: [{ grau: "G1", tribunal: "TJSP", movimentos: [] }],
+      estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" },
+    }),
+  };
+  const global = contextoComP1(document, api);
+  global.P1Api.listarPortfolios = async () => ({ portfolios: [{ id: "11111111-1111-4111-8111-111111111111", nome: "Recuperação SP", papel: "criador" }] });
+  global.P1Api.adicionarItem = async (portfolioId, processId, intervaloMinutos) => {
+    incluidos.push([portfolioId, processId, intervaloMinutos]);
+    return { id: "novo" };
+  };
+  // Recarrega a lista agora que o stub devolve uma carteira e abre a carteira.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await global.P1Ui.recarregarCarteiras();
+  await todos(document.getElementById("portfolios-lista"), (no) => no.className === "p1-portfolio-btn")[0].click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const input = document.getElementById("cnj-input");
+  input.value = "0001327-88.2018.8.26.0344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (no) => no.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const acao = achar(document.getElementById("resultado-online"), (no) => no.className === "p1-monitorar");
+  assert.ok(acao, "esperava a ação de monitorar junto do resultado da consulta");
+  await acao.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(incluidos, [["11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1440]]);
+});

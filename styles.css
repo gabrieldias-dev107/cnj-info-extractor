@@ -630,3 +630,26 @@ footer {
   .p1 input { max-width: 100%; }
   .p1-membros li { align-items: flex-start; flex-direction: column; gap: .35rem; }
 }
+
+/* Ação de monitorar, junto do resultado da consulta online */
+.p1-monitorar-acao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin: 0 0 1.25rem;
+}
+.p1-monitorar {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  padding: .5rem 1rem;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--brand-ink);
+}
+.p1-monitorar:hover { background: #eef3fb; }
+.p1-monitorar:disabled { opacity: .5; cursor: not-allowed; }
+.p1-monitorar-erro { color: var(--erro); font-size: .85rem; }

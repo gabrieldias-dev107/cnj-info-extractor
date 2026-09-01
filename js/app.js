@@ -164,7 +164,7 @@
         setOnlineEstado("vazio", "Processo não encontrado na base pública do DataJud.");
         return;
       }
-      renderOnline(r.processos, !!r._cache, r.estagio);
+      renderOnline(r.processos, !!r._cache, r.estagio, r.processId);
     } catch (e) {
       if (idConsulta !== consultaSeq) return;
       if (e && e.message === "autenticacao_necessaria") {
@@ -332,7 +332,7 @@
     return bloco;
   }
 
-  function renderOnline(processos, fromCache, estagio) {
+  function renderOnline(processos, fromCache, estagio, processId) {
     limpar(resultadoOnline);
     resultadoOnline.className = "resultado-online ok";
 
@@ -347,6 +347,7 @@
     }
     resultadoOnline.appendChild(titulo);
     if (estagio) resultadoOnline.appendChild(blocoEstagio(estagio));
+    anexarAcaoMonitorar(processId);
 
     var corpo = el("div", "instancia-corpo");
 
@@ -395,6 +396,16 @@
     resultadoOnline.appendChild(corpo);
     if (processos.length > 1) corpo.setAttribute("aria-labelledby", "instancia-tab-0");
     renderInstancia(corpo, processos[0]);
+  }
+
+  // Acabou de achar o processo é o momento em que faz sentido dizer "acompanhe
+  // este". O identificador vem da própria resposta, então não há nada para o
+  // usuário copiar ou digitar. Sem P1Ui ou sem SSO, nada é desenhado.
+  function anexarAcaoMonitorar(processId) {
+    var p1 = global.P1Ui;
+    if (!p1 || !p1.blocoMonitorar) return;
+    var bloco = p1.blocoMonitorar(processId);
+    if (bloco) resultadoOnline.appendChild(bloco);
   }
 
   function renderInstancia(corpo, p) {
