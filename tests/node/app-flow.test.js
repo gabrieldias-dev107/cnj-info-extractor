@@ -3,59 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-class No {
-  constructor(tag, documento, texto = "") {
-    this.tagName = tag.toUpperCase();
-    this.nodeType = tag === "#text" ? 3 : 1;
-    this.documento = documento;
-    this.children = [];
-    this.attributes = new Map();
-    this.listeners = new Map();
-    this._text = texto;
-    this.className = "";
-    this.hidden = false;
-    this.disabled = false;
-    this.value = "";
-    this.open = false;
-  }
-  get firstChild() { return this.children[0] || null; }
-  get textContent() { return this._text + this.children.map((filho) => filho.textContent).join(""); }
-  set textContent(valor) { this._text = String(valor); this.children = []; }
-  appendChild(filho) { this.children.push(filho); filho.parentNode = this; return filho; }
-  removeChild(filho) { this.children.splice(this.children.indexOf(filho), 1); }
-  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
-  setAttribute(nome, valor) { this.attributes.set(nome, String(valor)); }
-  removeAttribute(nome) { this.attributes.delete(nome); }
-  getAttribute(nome) { return this.attributes.get(nome) || null; }
-  addEventListener(tipo, fn) { const lista = this.listeners.get(tipo) || []; lista.push(fn); this.listeners.set(tipo, lista); }
-  async dispatch(tipo, extra = {}) { for (const fn of this.listeners.get(tipo) || []) await fn({ type: tipo, preventDefault() {}, key: "", ...extra }); }
-  click() { return this.dispatch("click"); }
-  focus() { this.documento.activeElement = this; }
-  showModal() { this.open = true; }
-  close() { this.open = false; void this.dispatch("close"); }
-}
-
-function documentoFake() {
-  const ids = new Map();
-  const doc = {
-    readyState: "complete",
-    activeElement: null,
-    createElement(tag) { return new No(tag, doc); },
-    createTextNode(texto) { return new No("#text", doc, String(texto)); },
-    getElementById(id) { return ids.get(id); },
-    querySelectorAll() { return []; },
-  };
-  for (const [id, tag] of Object.entries({
-    "cnj-input": "input", resultado: "section", "resultado-online": "section", contador: "div",
-    "login-dialog": "dialog", "login-form": "form", "login-password": "input", "login-error": "p",
-    "login-submit": "button", "login-cancel": "button", "session-logout": "button",
-    "batch-form": "form", "batch-numbers": "textarea", "batch-file": "input", "batch-submit": "button", "batch-status": "p",
-    "batch-itens": "div",
-    "batch-export": "a",
-    "batch-export-xlsx": "a",
-  })) ids.set(id, new No(tag, doc));
-  return doc;
-}
+import { achar, documentoFake, todos } from "./helpers/dom.js";
 
 // Contexto mínimo de janela para rodar js/app.js sob vm.
 function contexto(document, api) {
@@ -77,12 +25,6 @@ function contexto(document, api) {
   global.window = global;
   global.globalThis = global;
   return global;
-}
-
-function achar(node, predicado) {
-  if (predicado(node)) return node;
-  for (const filho of node.children || []) { const achado = achar(filho, predicado); if (achado) return achado; }
-  return null;
 }
 
 test("login retenta consulta, restaura foco e renderiza payload XSS como texto", async () => {
@@ -292,4 +234,80 @@ test("painel do lote lista cada linha com situação e estágio", async () => {
   // Sem innerHTML: cada célula é um nó de texto criado pelo app.
   assert.ok(achar(painel, (node) => node.tagName === "TABLE"));
   assert.equal(document.getElementById("batch-export").hidden, false);
+});
+
+// Contexto com a lógica CNJ real e a interface P1 carregada junto: é assim que
+// os dois scripts convivem no index.html.
+function contextoComP1(document, api) {
+  const global = {
+    document,
+    CNJApi: api,
+    P1Api: {
+      listarPortfolios: async () => ({ portfolios: [] }),
+      listarItens: async () => ({ itens: [] }),
+      listarMembros: async () => ({ membros: [] }),
+      listarProbes: async () => ({ probes: [] }),
+      consultarHistorico: async () => ({ snapshots: [], delta: null }),
+    },
+    Date,
+    setTimeout,
+    clearTimeout,
+    setInterval: () => 1,
+    clearInterval: () => {},
+  };
+  global.window = global;
+  global.globalThis = global;
+  const contexto = vm.createContext(global);
+  for (const arquivo of ["js/tables.js", "js/cnj.js", "js/p1-ui.js", "js/app.js"]) {
+    vm.runInContext(readFileSync(arquivo, "utf8"), contexto, { filename: arquivo });
+  }
+  return global;
+}
+
+test("número com dígito verificador errado oferece candidatos sem corrigir a entrada", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({ encontrado: false, processos: [] }),
+  };
+  const global = contextoComP1(document, api);
+
+  const input = document.getElementById("cnj-input");
+  const digitado = "0001327-88.2018.8.26.0345"; // DV inválido de propósito
+  input.value = digitado;
+  await input.dispatch("input");
+
+  const resultado = document.getElementById("resultado");
+  const sugestoes = todos(resultado, (no) => no.className === "sugestao");
+  assert.ok(sugestoes.length > 0, "esperava candidatos para o número inválido");
+  assert.equal(global.CNJ.normalize(input.value), "00013278820188260345");
+
+  await sugestoes[0].click();
+  const corrigido = global.CNJ.normalize(input.value);
+  assert.notEqual(corrigido, "00013278820188260345");
+  assert.equal(global.CNJ.validate(global.CNJ.parse(corrigido)), true);
+});
+
+test("falha do tribunal na consulta vira sinal de saúde para as sondas", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => { throw new Error("tribunal_indisponivel"); },
+  };
+  const global = contextoComP1(document, api);
+
+  const input = document.getElementById("cnj-input");
+  input.value = "0001327-88.2018.8.26.0344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (no) => no.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(global.P1Ui.estadoTribunal("api_publica_tjsp"), "tribunal_indisponivel");
+  assert.match(document.getElementById("resultado-online").textContent, /tribunal está indisponível/i);
 });

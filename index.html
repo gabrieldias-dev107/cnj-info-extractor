@@ -63,6 +63,52 @@
       <a id="batch-export-xlsx" class="btn-secundario" hidden>Baixar XLSX</a>
     </section>
 
+    <section class="p1 glossario" aria-labelledby="glossario-titulo">
+      <h2 id="glossario-titulo">Glossário de movimentos (TPU)</h2>
+      <p>
+        Estágio jurídico só vem de código da Tabela Processual Unificada. Esta é a
+        lista curada e versionada que a ferramenta usa — nenhum estágio é deduzido
+        do nome do movimento.
+      </p>
+      <label for="glossario-busca">Buscar por código ou descrição</label>
+      <input id="glossario-busca" type="search" autocomplete="off" spellcheck="false" placeholder="alvará">
+      <div id="glossario-resultado" class="glossario-resultado" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="p1 carteiras" aria-labelledby="portfolios-titulo">
+      <h2 id="portfolios-titulo">Carteiras monitoradas</h2>
+      <p>
+        Uma carteira agrupa processos reconsultados de tempos em tempos. Quem cria a
+        carteira administra processos, membros e sondas; membros leem tudo e recebem
+        o resumo diário.
+      </p>
+      <p id="portfolios-status" class="p1-status" role="status" aria-live="polite"></p>
+      <form id="portfolio-form" hidden>
+        <label for="portfolio-nome">Nome da nova carteira</label>
+        <input id="portfolio-nome" type="text" maxlength="120" autocomplete="off" required>
+        <button id="portfolio-criar" class="btn-consultar" type="submit">Criar carteira</button>
+      </form>
+      <div id="portfolios-lista" class="p1-lista"></div>
+      <div id="portfolio-detalhe" class="p1-detalhe" hidden></div>
+    </section>
+
+    <section class="p1 historico" aria-labelledby="historico-titulo">
+      <h2 id="historico-titulo">Histórico do processo</h2>
+      <p>
+        Mostra as consultas já registradas e a mudança de estágio entre as duas mais
+        recentes. Disponível para processos de alguma carteira sua.
+      </p>
+      <form id="historico-form">
+        <label for="historico-numero">Número do processo</label>
+        <input id="historico-numero" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+          placeholder="0000000-00.0000.0.00.0000" required>
+        <div id="historico-sugestoes" class="p1-sugestoes-campo"></div>
+        <button id="historico-consultar" class="btn-consultar" type="submit">Ver histórico</button>
+      </form>
+      <p id="historico-status" class="p1-status" role="status" aria-live="polite"></p>
+      <div id="historico-resultado" class="p1-detalhe"></div>
+    </section>
+
     <section class="ajuda">
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
@@ -95,10 +141,12 @@
     </form>
   </dialog>
 
-  <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> app -->
+  <!-- Scripts clássicos, ordem importa: tabelas -> lógica -> clientes -> interface -->
   <script src="js/tables.js"></script>
   <script src="js/cnj.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/p1-api.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/p1-ui.js"></script>
 </body>
 </html>
