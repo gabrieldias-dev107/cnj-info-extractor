@@ -1,7 +1,7 @@
-import { currentUser } from "../../server/sso.js";
-import { ssoConfigurado } from "../../server/sso-config.js";
-import { origemPermitida } from "../../server/origin.js";
-import { createPortfolio, deletePortfolioForCreator, portfoliosForUser, updatePortfolioForCreator } from "../../server/db.js";
+import { currentUser } from "../sso.js";
+import { ssoConfigurado } from "../sso-config.js";
+import { origemPermitida } from "../origin.js";
+import { createPortfolio, deletePortfolioForCreator, portfoliosForUser, updatePortfolioForCreator } from "../db.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

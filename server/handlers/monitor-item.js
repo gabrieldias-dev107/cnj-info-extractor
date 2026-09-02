@@ -1,8 +1,8 @@
-import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot, updateMonitoredProcessStage } from "../server/db.js";
-import { consultarComResiliencia } from "../server/p1-automation.js";
-import { mudancaRelevante } from "../server/p1-core.js";
-import { verifyQstash } from "../server/queue.js";
-import { consumirMonitoramento } from "../server/rate-limit.js";
+import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot, updateMonitoredProcessStage } from "../db.js";
+import { consultarComResiliencia } from "../p1-automation.js";
+import { mudancaRelevante } from "../p1-core.js";
+import { verifyQstash } from "../queue.js";
+import { consumirMonitoramento } from "../rate-limit.js";
 
 export const config = { api: { bodyParser: false } };
 

@@ -1,8 +1,8 @@
-import { currentUser } from "../server/sso.js";
-import { ssoConfigurado } from "../server/sso-config.js";
-import { origemPermitida } from "../server/origin.js";
-import { processHistoryForUser } from "../server/db.js";
-import { mudancaRelevante } from "../server/p1-core.js";
+import { currentUser } from "../sso.js";
+import { ssoConfigurado } from "../sso-config.js";
+import { origemPermitida } from "../origin.js";
+import { processHistoryForUser } from "../db.js";
+import { mudancaRelevante } from "../p1-core.js";
 
 function erro(res, status, codigo) {
   return res.status(status).json({ error: codigo });

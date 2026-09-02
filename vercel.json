@@ -1,5 +1,20 @@
 {
   "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/auth/login", "destination": "/api/p1-auth-handler?handler=login" },
+    { "source": "/api/auth/callback", "destination": "/api/p1-auth-handler?handler=callback" },
+    { "source": "/api/portfolios", "destination": "/api/p1-portfolio-handler?handler=portfolio" },
+    { "source": "/api/portfolios/items", "destination": "/api/p1-portfolio-handler?handler=items" },
+    { "source": "/api/portfolios/members", "destination": "/api/p1-portfolio-handler?handler=members" },
+    { "source": "/api/session", "destination": "/api/p1-query-handler?handler=session" },
+    { "source": "/api/datajud", "destination": "/api/p1-query-handler?handler=datajud" },
+    { "source": "/api/health-probes", "destination": "/api/p1-query-handler?handler=health-probes" },
+    { "source": "/api/process-history", "destination": "/api/p1-query-handler?handler=process-history" },
+    { "source": "/api/monitor-worker", "destination": "/api/p1-monitor-handler?handler=tick" },
+    { "source": "/api/monitor-item-worker", "destination": "/api/p1-monitor-handler?handler=item" },
+    { "source": "/api/health-worker", "destination": "/api/p1-health-handler?handler=tick" },
+    { "source": "/api/health-item-worker", "destination": "/api/p1-health-handler?handler=item" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

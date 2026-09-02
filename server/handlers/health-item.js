@@ -1,7 +1,7 @@
-import { healthProbeForWorker, recordHealthMeasurement } from "../server/db.js";
-import { circuitoAberto, classificarFalhaTribunal, consultarComResiliencia } from "../server/p1-automation.js";
-import { verifyQstash } from "../server/queue.js";
-import { consumirSaude } from "../server/rate-limit.js";
+import { healthProbeForWorker, recordHealthMeasurement } from "../db.js";
+import { circuitoAberto, classificarFalhaTribunal, consultarComResiliencia } from "../p1-automation.js";
+import { verifyQstash } from "../queue.js";
+import { consumirSaude } from "../rate-limit.js";
 
 export const config = { api: { bodyParser: false } };
 

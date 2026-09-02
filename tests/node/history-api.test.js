@@ -24,8 +24,8 @@ const headers = { host: "app.vercel.app", origin: "https://app.vercel.app" };
 const NUMERO = "00013278820188260344";
 
 async function handler() {
-  const modulo = await import("../../api/process-history.js").catch(() => ({}));
-  assert.equal(typeof modulo.default, "function", "api/process-history.js precisa expor um handler");
+  const modulo = await import("../../server/handlers/process-history.js").catch(() => ({}));
+  assert.equal(typeof modulo.default, "function", "handler de process-history precisa existir");
   return modulo.default;
 }
 

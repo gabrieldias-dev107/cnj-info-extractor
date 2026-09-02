@@ -34,8 +34,8 @@ mock.module("../../server/db.js", {
 const headers = { host: "app.vercel.app", origin: "https://app.vercel.app" };
 
 async function handler() {
-  const modulo = await import("../../api/health-probes.js").catch(() => ({}));
-  assert.equal(typeof modulo.default, "function", "api/health-probes.js precisa expor um handler");
+  const modulo = await import("../../server/handlers/health-probes.js").catch(() => ({}));
+  assert.equal(typeof modulo.default, "function", "handler de health-probes precisa existir");
   return modulo.default;
 }
 

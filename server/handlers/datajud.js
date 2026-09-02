@@ -5,13 +5,13 @@
 //
 // A consulta online exige sessão; o decodificador estático permanece público.
 
-import { sessaoValida } from "../server/auth.js";
-import { origemPermitida } from "../server/origin.js";
-import { consumirDatajud } from "../server/rate-limit.js";
-import { currentUser } from "../server/sso.js";
-import { freshSnapshot, persistSnapshot, recordConsultation } from "../server/db.js";
-import { validarNumeroParaConsulta } from "../server/cnj-validation.js";
-import { ssoConfigurado } from "../server/sso-config.js";
+import { sessaoValida } from "../auth.js";
+import { origemPermitida } from "../origin.js";
+import { consumirDatajud } from "../rate-limit.js";
+import { currentUser } from "../sso.js";
+import { freshSnapshot, persistSnapshot, recordConsultation } from "../db.js";
+import { validarNumeroParaConsulta } from "../cnj-validation.js";
+import { ssoConfigurado } from "../sso-config.js";
 
 var BASE = "https://api-publica.datajud.cnj.jus.br";
 var ALIAS_RE = /^api_publica_[a-z0-9-]{1,52}$/;

@@ -82,10 +82,10 @@ mock.module("../../server/resend.js", {
   },
 });
 
-const { default: monitorTick } = await import("../../api/monitor-worker.js");
-const { default: monitorItem } = await import("../../api/monitor-item-worker.js");
-const { default: saudeTick } = await import("../../api/health-worker.js");
-const { default: saudeItem } = await import("../../api/health-item-worker.js");
+const { default: monitorTick } = await import("../../server/handlers/monitor-tick.js");
+const { default: monitorItem } = await import("../../server/handlers/monitor-item.js");
+const { default: saudeTick } = await import("../../server/handlers/health-tick.js");
+const { default: saudeItem } = await import("../../server/handlers/health-item.js");
 const { default: digest } = await import("../../api/digest-worker.js");
 
 function resposta() {

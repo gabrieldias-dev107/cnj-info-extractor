@@ -30,7 +30,7 @@ mock.module("../../server/db.js", {
   },
 });
 
-const { default: handler } = await import("../../api/datajud.js");
+const { default: handler } = await import("../../server/handlers/datajud.js");
 
 const NUMERO = "00013278820188260344";
 

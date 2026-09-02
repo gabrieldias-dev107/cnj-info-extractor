@@ -15,8 +15,8 @@ mock.module("../../server/sso.js", {
   },
 });
 
-const { default: login } = await import("../../api/auth/login.js");
-const { default: callback } = await import("../../api/auth/callback.js");
+const { default: login } = await import("../../server/handlers/auth-login.js");
+const { default: callback } = await import("../../server/handlers/auth-callback.js");
 
 function resposta() {
   return {

@@ -61,7 +61,7 @@ function reiniciar() {
 
 test("criador cria, renomeia e exclui o próprio portfólio", async () => {
   reiniciar();
-  const portfolios = await handler("../../api/portfolios/index.js");
+  const portfolios = await handler("../../server/handlers/portfolio.js");
 
   const listar = response();
   await portfolios({ method: "GET", headers }, listar);
@@ -93,8 +93,8 @@ test("criador cria, renomeia e exclui o próprio portfólio", async () => {
 test("membro ativo lê itens e membros, mas não pode mutar o portfólio", async () => {
   reiniciar();
   estado.portfolio = { id: PORTFOLIO_ID, nome: "Alfa", papel: "membro" };
-  const itens = await handler("../../api/portfolios/items.js");
-  const membros = await handler("../../api/portfolios/members.js");
+  const itens = await handler("../../server/handlers/portfolio-items.js");
+  const membros = await handler("../../server/handlers/portfolio-members.js");
 
   const lerItens = response();
   await itens({ method: "GET", headers, query: { portfolioId: PORTFOLIO_ID } }, lerItens);
@@ -120,7 +120,7 @@ test("membro ativo lê itens e membros, mas não pode mutar o portfólio", async
 test("outro portfólio é 404 tanto na leitura quanto na mutação", async () => {
   reiniciar();
   estado.portfolio = null;
-  const itens = await handler("../../api/portfolios/items.js");
+  const itens = await handler("../../server/handlers/portfolio-items.js");
 
   const leitura = response();
   await itens({ method: "GET", headers, query: { portfolioId: PORTFOLIO_NOVO_ID } }, leitura);
@@ -135,7 +135,7 @@ test("outro portfólio é 404 tanto na leitura quanto na mutação", async () =>
 
 test("item monitorado devolve a linha Neon em camelCase", async () => {
   reiniciar();
-  const itens = await handler("../../api/portfolios/items.js");
+  const itens = await handler("../../server/handlers/portfolio-items.js");
   const res = response();
 
   await itens({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, processId: PROCESS_ID, intervaloMinutos: 30 } }, res);
@@ -146,9 +146,9 @@ test("item monitorado devolve a linha Neon em camelCase", async () => {
 
 test("UUIDs malformados de portfólio, item, membro e processo são recusados antes do banco", async () => {
   reiniciar();
-  const portfolios = await handler("../../api/portfolios/index.js");
-  const itens = await handler("../../api/portfolios/items.js");
-  const membros = await handler("../../api/portfolios/members.js");
+  const portfolios = await handler("../../server/handlers/portfolio.js");
+  const itens = await handler("../../server/handlers/portfolio-items.js");
+  const membros = await handler("../../server/handlers/portfolio-members.js");
 
   const portfolioInvalido = response();
   await portfolios({ method: "PATCH", headers, body: { id: "portfolio-invalido", nome: "Alfa" } }, portfolioInvalido);
@@ -174,7 +174,7 @@ test("UUIDs malformados de portfólio, item, membro e processo são recusados an
 
 test("intervalo de monitoramento aceita somente número JSON inteiro entre 1 e 1440 minutos", async () => {
   reiniciar();
-  const itens = await handler("../../api/portfolios/items.js");
+  const itens = await handler("../../server/handlers/portfolio-items.js");
   const base = { portfolioId: PORTFOLIO_ID, processId: PROCESS_ID };
 
   for (const intervaloMinutos of ["30", 30.5, Number.POSITIVE_INFINITY, 1441]) {
@@ -191,7 +191,7 @@ test("intervalo de monitoramento aceita somente número JSON inteiro entre 1 e 1
 
 test("rotas de portfólio preservam origem e sessão SSO do P0", async () => {
   reiniciar();
-  const portfolios = await handler("../../api/portfolios/index.js");
+  const portfolios = await handler("../../server/handlers/portfolio.js");
 
   const cruzada = response();
   await portfolios({ method: "GET", headers: { host: "app.vercel.app", origin: "https://outro.example" } }, cruzada);

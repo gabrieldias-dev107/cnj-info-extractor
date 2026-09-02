@@ -1,8 +1,8 @@
-import { currentUser } from "../server/sso.js";
-import { ssoConfigurado } from "../server/sso-config.js";
-import { origemPermitida } from "../server/origin.js";
-import { createHealthProbe, deleteHealthProbeForCreator, healthProbesForUser, portfolioForUser, updateHealthProbeForCreator } from "../server/db.js";
-import { validarNumeroParaConsulta } from "../server/cnj-validation.js";
+import { currentUser } from "../sso.js";
+import { ssoConfigurado } from "../sso-config.js";
+import { origemPermitida } from "../origin.js";
+import { createHealthProbe, deleteHealthProbeForCreator, healthProbesForUser, portfolioForUser, updateHealthProbeForCreator } from "../db.js";
+import { validarNumeroParaConsulta } from "../cnj-validation.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_INTERVALO_MINUTOS = 1440;

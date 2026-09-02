@@ -1,5 +1,5 @@
-import { advanceHealthProbe, dueHealthProbes } from "../server/db.js";
-import { publishHealthProbe, verifyQstash } from "../server/queue.js";
+import { advanceHealthProbe, dueHealthProbes } from "../db.js";
+import { publishHealthProbe, verifyQstash } from "../queue.js";
 
 export const config = { api: { bodyParser: false } };
 

@@ -1,8 +1,8 @@
-import { autenticacaoConfigurada, cookieSessao, cookieSessaoExpirada, criarTokenSessao, senhaValida, sessaoValida } from "../server/auth.js";
-import { origemPermitida } from "../server/origin.js";
-import { consumirLogin } from "../server/rate-limit.js";
-import { currentUser, logout } from "../server/sso.js";
-import { ssoConfigurado } from "../server/sso-config.js";
+import { autenticacaoConfigurada, cookieSessao, cookieSessaoExpirada, criarTokenSessao, senhaValida, sessaoValida } from "../auth.js";
+import { origemPermitida } from "../origin.js";
+import { consumirLogin } from "../rate-limit.js";
+import { currentUser, logout } from "../sso.js";
+import { ssoConfigurado } from "../sso-config.js";
 
 function erro(res, status, codigo, retryAfter) {
   if (retryAfter) res.setHeader("Retry-After", String(retryAfter));

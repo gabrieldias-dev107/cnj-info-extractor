@@ -8,7 +8,7 @@ process.env.UPSTASH_REDIS_REST_TOKEN = "token-de-teste";
 process.env.APP_ACCESS_PASSWORD = "senha-compartilhada-segura";
 process.env.SESSION_SECRET = "segredo-de-sessao-com-pelo-menos-32-caracteres";
 
-const { default: handler, ordenarInstancias } = await import("../../api/datajud.js");
+const { default: handler, ordenarInstancias } = await import("../../server/handlers/datajud.js");
 const { criarTokenSessao } = await import("../../server/auth.js");
 
 const NUMERO = "00013278820188260344";

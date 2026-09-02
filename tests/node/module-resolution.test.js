@@ -53,3 +53,32 @@ test("documentação operacional lista rotas P1 e variáveis do Resend", () => {
   assert.match(env, /^RESEND_API_KEY=$/m);
   assert.match(env, /^RESEND_FROM_EMAIL=$/m);
 });
+
+test("Vercel mantém as rotas P1 em no máximo 12 Functions", () => {
+  const funcoes = arquivos("api");
+  assert.ok(funcoes.length <= 12, `Vercel Hobby aceita no máximo 12 Functions; encontrou ${funcoes.length}`);
+
+  const { rewrites = [] } = JSON.parse(readFileSync("vercel.json", "utf8"));
+  const rotasConsolidadas = {
+    "/api/auth/login": "/api/p1-auth-handler?handler=login",
+    "/api/auth/callback": "/api/p1-auth-handler?handler=callback",
+    "/api/portfolios": "/api/p1-portfolio-handler?handler=portfolio",
+    "/api/portfolios/items": "/api/p1-portfolio-handler?handler=items",
+    "/api/portfolios/members": "/api/p1-portfolio-handler?handler=members",
+    "/api/session": "/api/p1-query-handler?handler=session",
+    "/api/datajud": "/api/p1-query-handler?handler=datajud",
+    "/api/health-probes": "/api/p1-query-handler?handler=health-probes",
+    "/api/process-history": "/api/p1-query-handler?handler=process-history",
+    "/api/monitor-worker": "/api/p1-monitor-handler?handler=tick",
+    "/api/monitor-item-worker": "/api/p1-monitor-handler?handler=item",
+    "/api/health-worker": "/api/p1-health-handler?handler=tick",
+    "/api/health-item-worker": "/api/p1-health-handler?handler=item",
+  };
+
+  for (const [source, destination] of Object.entries(rotasConsolidadas)) {
+    assert.ok(
+      rewrites.some((rewrite) => rewrite.source === source && rewrite.destination === destination),
+      `rewrite ausente: ${source} -> ${destination}`,
+    );
+  }
+});

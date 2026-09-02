@@ -297,11 +297,19 @@ do processo **nunca** é logado inteiro — só os 4 últimos dígitos.
 
 ## Deploy (Vercel)
 
-Site estático + uma função serverless, sem build. Deploy automático a cada `git push`.
+Site estático + Functions serverless, sem build. Deploy automático a cada `git push`.
 
 - `vercel.json` — `cleanUrls` e cabeçalhos de segurança (CSP, HSTS, `frame-ancestors`,
-  `Permissions-Policy`, `nosniff`, `Referrer-Policy`).
+  `Permissions-Policy`, `nosniff`, `Referrer-Policy`), além dos rewrites internos.
 - `.vercelignore` — exclui `tests/` do site publicado (continua versionado no Git).
+
+### Limite de Functions no plano Hobby
+
+O projeto usa **11 Functions** sob `api/`, abaixo do limite de 12 do plano Hobby. Os
+handlers consolidados ficam em `server/handlers/`; `vercel.json` reescreve cada URL pública
+para a Function agregadora correspondente. Assim, URLs e contratos — inclusive assinatura
+QStash sobre a URL pública original — permanecem os mesmos. Não volte a expor os módulos em
+`api/` sem reduzir o total ou migrar o plano; o teste de resolução impede ultrapassar o teto.
 
 A CSP não permite `unsafe-inline`: **não** introduza `<script>` ou `style=` inline em
 `index.html` sem revisar a política.

@@ -1,5 +1,5 @@
-import { advanceMonitoredProcess, dueMonitoredProcesses } from "../server/db.js";
-import { publishMonitoredProcess, verifyQstash } from "../server/queue.js";
+import { advanceMonitoredProcess, dueMonitoredProcesses } from "../db.js";
+import { publishMonitoredProcess, verifyQstash } from "../queue.js";
 
 export const config = { api: { bodyParser: false } };
 

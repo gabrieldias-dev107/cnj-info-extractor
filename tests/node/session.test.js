@@ -7,7 +7,7 @@ process.env.SESSION_SECRET = "segredo-de-sessao-com-pelo-menos-32-caracteres";
 process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
 process.env.UPSTASH_REDIS_REST_TOKEN = "token";
 
-const { default: handler } = await import("../../api/session.js");
+const { default: handler } = await import("../../server/handlers/session.js");
 
 async function executar(req, fetchImpl = async () => jsonResponse(200, [{ result: 1 }, { result: 1 }])) {
   const anterior = globalThis.fetch;
