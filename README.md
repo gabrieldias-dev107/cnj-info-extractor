@@ -55,6 +55,10 @@ a consulta online é feita, o órgão julgador vem no retorno do DataJud.
 - `api/batches/export.js` — baixa o resultado em CSV ou XLSX.
 - `api/batch-worker.js` — worker chamado pelo QStash, com assinatura verificada.
 - `api/maintenance/purge.js` — expurgo de retenção, também assinado pelo QStash.
+- `api/portfolios/` — carteiras P1, itens monitorados e membros compartilhados.
+- `api/health-probes.js`, `api/process-history.js` — sondas de tribunal e histórico protegido.
+- `api/monitor-worker.js`, `api/health-worker.js`, `api/digest-worker.js` — ticks P1 assinados
+  pelo QStash; os respectivos `*-item-worker` executam uma unidade de trabalho.
 - `server/` — SSO, banco, fila, validação CNJ, planilhas, origem e rate limit.
 - `db/migrations/` — esquema Neon; aplicado por `scripts/migrate.js` (`npm run db:migrate`).
 - `scripts/check-imports.mjs` — `npm run check`: importa cada módulo para pegar
@@ -85,6 +89,8 @@ Variáveis documentadas em `.env.example`. Localmente, `vercel env pull` gera o 
 | `QSTASH_TOKEN` | lotes | Publica os jobs de triagem |
 | `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | lotes | Verificam a assinatura do worker e do expurgo |
 | `QSTASH_URL` | conta fora da região padrão | Endpoint regional do QStash, lido pelo SDK |
+| `RESEND_API_KEY` | P1 | Chave de runtime para enviar o digest diário |
+| `RESEND_FROM_EMAIL` | P1 | Remetente verificado no Resend para o digest diário |
 
 ### Rotação da chave do DataJud
 
@@ -122,6 +128,50 @@ além dele, o `tid` do token precisa bater com `M365_TENANT_ID`.
 
 Sem estas variáveis, o comportamento legado por senha fica somente para
 desenvolvimento/homologação. Não configure produção parcialmente.
+
+### P1: carteiras, monitoramento e saúde
+
+A P1 exige o modo interno completo: Microsoft Entra, `DATABASE_URL`, QStash e
+Redis configurados. Nenhuma rota P1 aceita a senha compartilhada. As carteiras,
+seus membros, itens monitorados, sondas, medições e alertas expiram em até 180
+dias; o expurgo assinado existente remove os registros vencidos.
+
+| Rota | Contrato |
+|---|---|
+| `GET`/`POST`/`PATCH`/`DELETE /api/portfolios` | Lista, cria, renomeia ou exclui uma carteira. Somente o criador altera ou exclui. |
+| `GET`/`POST`/`PATCH`/`DELETE /api/portfolios/items?portfolioId=<uuid>` | Lista itens para criador ou membro; somente o criador inclui, muda o intervalo (1–1.440 minutos) ou remove. |
+| `GET`/`POST`/`DELETE /api/portfolios/members?portfolioId=<uuid>` | Lista membros ativos; somente o criador convida ou remove por `userId`. |
+| `GET`/`POST`/`PATCH`/`DELETE /api/health-probes?portfolioId=<uuid>` | Lê sondas da carteira; somente o criador as administra. A entrada é o número CNJ, e o alias DataJud é derivado no servidor. |
+| `GET /api/process-history?numero=<20 dígitos>` | Retorna snapshots reduzidos e transições somente se o processo estiver monitorado em carteira acessível ao usuário. |
+
+Uma consulta DataJud autenticada devolve `processId` junto ao resultado, permitindo ao
+criador incluir o processo encontrado em uma carteira aberta. Membros veem as carteiras,
+itens, membros, sondas e histórico, mas nenhum controle de escrita. Um usuário sem vínculo
+recebe `404`, sem descoberta de outra carteira.
+
+O monitoramento reserva 480 consultas DataJud por dia e as sondas de saúde reservam 120;
+os dois usam o mesmo fluxo global de cinco workers. Um alerta só é criado quando existe
+transição que envolva estágio TPU aprovado. O digest reúne alertas por destinatário ativo,
+tenta no máximo três envios por alerta e só registra sucesso após aceite 2xx do Resend.
+Números CNJ nunca entram em logs de workers.
+
+`RESEND_API_KEY` e `RESEND_FROM_EMAIL` existem somente no runtime das funções. Cadastre
+ambas na Vercel; não as exponha em JavaScript do navegador, respostas, logs ou documentação.
+
+#### Workers e schedules P1
+
+Os cinco workers P1 aceitam apenas `POST` com assinatura QStash sobre o corpo bruto:
+
+- `/api/monitor-worker` escolhe itens devidos; `/api/monitor-item-worker` consulta um item.
+- `/api/health-worker` escolhe sondas devidas; `/api/health-item-worker` mede uma sonda.
+- `/api/digest-worker` envia o resumo diário.
+
+Crie os schedules no QStash, nunca em `vercel.json`: os handlers rejeitam chamadas sem
+assinatura. Use horários UTC: `0 * * * *` para `/api/monitor-worker` e
+`/api/health-worker`; `0 11 * * *` para `/api/digest-worker` (08:00 BRT, UTC-3).
+Mantenha o header `Upstash-Forward-x-vercel-protection-bypass` quando Deployment Protection
+estiver ativa, como no schedule de expurgo acima. Criação de schedules é operação externa ao
+repositório.
 
 ### Triagem em lote
 
@@ -255,6 +305,16 @@ Site estático + uma função serverless, sem build. Deploy automático a cada `
 
 A CSP não permite `unsafe-inline`: **não** introduza `<script>` ou `style=` inline em
 `index.html` sem revisar a política.
+
+### Pré-requisitos P1 para Preview e Produção
+
+Antes do deploy, aplique `npm run db:migrate` no Neon do ambiente alvo para executar
+`0003-p1-consolidacao.sql`; configure SSO, Redis, QStash, Resend e `APP_BASE_URL` daquele
+ambiente; depois crie os três schedules externos. Homologue em Preview autenticado: criar
+carteira, convidar membro já existente, adicionar processo a partir da consulta, observar um
+tick assinado de monitoramento e de saúde, e validar aceite e recusa do digest. Só então repita
+no ambiente de Produção. Testes locais não comprovam Entra, Neon, QStash, Resend, schedules
+nem Deployment Protection.
 
 ## Testes
 
