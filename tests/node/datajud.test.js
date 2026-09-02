@@ -71,6 +71,17 @@ test("DataJud devolve contrato de lista e ordena instâncias e movimentos", asyn
   assert.equal(logs.join(" ").includes("…0344"), true);
 });
 
+// Sem SSO não há banco, então não há processo persistido para monitorar. O
+// campo segue a mesma regra de `estagio`: só existe no modo com sessão Entra.
+test("sem SSO a resposta não inventa processId", async () => {
+  const { res } = await executar({
+    fetchImpl: async (url) => (String(url).includes("redis") ? redisResponse() : jsonResponse(200, hitsResposta())),
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.processId, undefined);
+  assert.equal(res.body.estagio, undefined);
+});
+
 test("DataJud recusa origem externa antes de chamar serviços externos", async () => {
   let chamadas = 0;
   const { res } = await executar({

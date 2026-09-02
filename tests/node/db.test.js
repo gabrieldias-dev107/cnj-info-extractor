@@ -41,7 +41,8 @@ function neonFake() {
 
 mock.module("@neondatabase/serverless", { namedExports: { neon: () => neonFake() } });
 
-const { claimBatchItem, createBatch, finishBatchItem, freshSnapshot, persistSnapshot, purgeExpired } = await import("../../server/db.js");
+const db = await import("../../server/db.js");
+const { claimBatchItem, createBatch, finishBatchItem, freshSnapshot, persistSnapshot, purgeExpired } = db;
 
 function reiniciar(roteiro = []) {
   consultas.length = 0;
@@ -174,12 +175,21 @@ test("processo sem código curado fica nao_classificado com TTL padrão de 7 dia
   assert.equal(insercao.parametros[8].getTime() - insercao.parametros[7].getTime(), 7 * 24 * 60 * 60 * 1000);
 });
 
-test("purgeExpired apaga sessões, lotes, snapshots e usuários vencidos", async () => {
-  reiniciar([[], [], [], []]);
+// O expurgo passou a cobrir as tabelas P1; a ordem vai de filha para mãe para
+// não depender só do ON DELETE CASCADE da migration.
+test("purgeExpired apaga sessões, lotes, snapshots, usuários e registros P1 vencidos", async () => {
+  reiniciar([[], [], [], [], [], [], [], [], [], [], []]);
   await purgeExpired();
   assert.deepEqual(textos(), [
     "DELETE FROM sessions WHERE expires_at <= now()",
     "DELETE FROM batches WHERE expires_at <= now()",
+    "DELETE FROM alert_send_attempts WHERE expires_at <= now()",
+    "DELETE FROM pending_alerts WHERE expires_at <= now()",
+    "DELETE FROM tribunal_health_measurements WHERE expires_at <= now()",
+    "DELETE FROM health_probes WHERE expires_at <= now()",
+    "DELETE FROM monitored_processes WHERE expires_at <= now()",
+    "DELETE FROM portfolio_members WHERE expires_at <= now()",
+    "DELETE FROM portfolios WHERE expires_at <= now()",
     "DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'",
     "DELETE FROM users WHERE last_login_at < now() - interval '180 days'",
   ]);
@@ -208,4 +218,210 @@ test("lote sem nenhum item pendente já nasce concluído", async () => {
     { linha: 1, numero: "123", alias: null, status: "invalido", erro: "numero_invalido" },
   ]);
   assert.equal(consultas[0].parametros[2], "concluido");
+});
+
+test("funções P1 de portfólio existem para isolar leitura de membro e mutação de criador", async () => {
+  for (const nome of [
+    "createPortfolio", "portfoliosForUser", "portfolioForUser", "updatePortfolioForCreator", "deletePortfolioForCreator",
+    "portfolioItemsForUser", "createPortfolioItem", "updatePortfolioItemForCreator", "deletePortfolioItemForCreator",
+    "portfolioMembersForUser", "addPortfolioMemberForCreator", "deletePortfolioMemberForCreator",
+  ]) {
+    assert.equal(typeof db[nome], "function", "db." + nome + " precisa existir");
+  }
+});
+
+test("portfolioForUser usa escopo de criador ou membro ativo e nunca concatena identificadores", async () => {
+  assert.equal(typeof db.portfolioForUser, "function", "db.portfolioForUser precisa existir");
+  reiniciar([[{ id: "portfolio-1", nome: "Alfa", papel: "membro" }]]);
+
+  const portfolio = await db.portfolioForUser("portfolio-1", "user-2");
+
+  assert.deepEqual(portfolio, { id: "portfolio-1", nome: "Alfa", papel: "membro" });
+  const consulta = textos()[0];
+  assert.match(consulta, /FROM portfolios p/);
+  assert.match(consulta, /portfolio_members pm/);
+  assert.match(consulta, /p\.creator_user_id=\$2/);
+  assert.match(consulta, /pm\.user_id=\$2/);
+  assert.match(consulta, /p\.expires_at > now\(\)/);
+  assert.match(consulta, /pm\.expires_at > now\(\)/);
+  assert.deepEqual(consultas[0].parametros, ["portfolio-1", "user-2"]);
+});
+
+test("mutação de portfólio filtra o criador no próprio UPDATE parametrizado", async () => {
+  assert.equal(typeof db.updatePortfolioForCreator, "function", "db.updatePortfolioForCreator precisa existir");
+  reiniciar([[{ id: "portfolio-1", nome: "Novo nome", papel: "criador" }]]);
+
+  const atualizado = await db.updatePortfolioForCreator("portfolio-1", "user-1", { nome: "Novo nome" });
+
+  assert.equal(atualizado.nome, "Novo nome");
+  const consulta = textos()[0];
+  assert.match(consulta, /UPDATE portfolios SET nome=\$3,updated_at=now\(\)/);
+  assert.match(consulta, /WHERE id=\$1 AND creator_user_id=\$2 AND expires_at > now\(\)/);
+  assert.deepEqual(consultas[0].parametros, ["portfolio-1", "user-1", "Novo nome"]);
+});
+
+test("histórico exige item acessível do portfólio e seleciona somente colunas seguras de snapshot", async () => {
+  assert.equal(typeof db.processHistoryForUser, "function", "db.processHistoryForUser precisa existir");
+  reiniciar([
+    [{ id: "monitor-1" }],
+    [{ id: "snap-1", consultado_em: "2026-09-01T10:00:00.000Z", estagio: "expedicao_alvara", estagio_codigo: 12548, estagio_data: "2026-09-01T09:00:00.000Z", tpu_versao: VERSAO_TPU }],
+  ]);
+
+  const historico = await db.processHistoryForUser("00013278820188260344", "user-2");
+
+  assert.equal(historico.snapshots.length, 1);
+  assert.match(textos()[0], /monitored_processes mp/);
+  assert.match(textos()[0], /portfolio_members pm/);
+  assert.match(textos()[0], /p\.numero=\$1/);
+  assert.match(textos()[0], /po\.creator_user_id=\$2/);
+  assert.deepEqual(consultas[0].parametros, ["00013278820188260344", "user-2"]);
+  assert.match(textos()[1], /SELECT s\.id,s\.consultado_em,s\.estagio,s\.estagio_codigo,s\.estagio_data,s\.tpu_versao/);
+  assert.equal(textos()[1].includes("s.dados"), false, "o histórico não deve trazer o payload bruto do DataJud");
+  assert.deepEqual(consultas[1].parametros, ["monitor-1"]);
+});
+
+test("seleção de trabalho devido respeita vencimento do item, do portfólio e o horário agendado", async () => {
+  assert.equal(typeof db.dueMonitoredProcesses, "function", "db.dueMonitoredProcesses precisa existir");
+  reiniciar([[{ id: "monitor-1" }]]);
+  const devidos = await db.dueMonitoredProcesses(50);
+
+  assert.deepEqual(devidos, [{ id: "monitor-1" }]);
+  const consulta = textos()[0];
+  assert.match(consulta, /FROM monitored_processes mp JOIN portfolios po ON po\.id=mp\.portfolio_id/);
+  assert.match(consulta, /mp\.proxima_consulta_em <= now\(\)/);
+  assert.match(consulta, /mp\.expires_at > now\(\)/);
+  assert.match(consulta, /po\.expires_at > now\(\)/);
+  assert.match(consulta, /LIMIT \$1/);
+  assert.deepEqual(consultas[0].parametros, [50]);
+
+  reiniciar([[{ id: "probe-1" }]]);
+  await db.dueHealthProbes(20);
+  const probes = textos()[0];
+  assert.match(probes, /FROM health_probes hp JOIN portfolios po ON po\.id=hp\.portfolio_id/);
+  assert.match(probes, /hp\.proxima_consulta_em <= now\(\)/);
+  assert.match(probes, /hp\.expires_at > now\(\) AND po\.expires_at > now\(\)/);
+});
+
+test("avanço do agendamento usa o intervalo da própria linha", async () => {
+  assert.equal(typeof db.advanceMonitoredProcess, "function", "db.advanceMonitoredProcess precisa existir");
+  reiniciar([[], []]);
+  await db.advanceMonitoredProcess("monitor-1");
+  await db.advanceHealthProbe("probe-1");
+
+  assert.match(textos()[0], /UPDATE monitored_processes SET proxima_consulta_em=now\(\) \+ \(intervalo_minutos \* interval '1 minute'\) WHERE id=\$1/);
+  assert.match(textos()[1], /UPDATE health_probes SET proxima_consulta_em=now\(\) \+ \(intervalo_minutos \* interval '1 minute'\) WHERE id=\$1/);
+  assert.deepEqual(consultas[0].parametros, ["monitor-1"]);
+  assert.deepEqual(consultas[1].parametros, ["probe-1"]);
+});
+
+// O probe guarda o próprio número; nada de emprestar o número de outro item
+// monitorado do portfólio.
+test("probe do worker lê número e alias da própria linha", async () => {
+  assert.equal(typeof db.healthProbeForWorker, "function", "db.healthProbeForWorker precisa existir");
+  reiniciar([[{ id: "probe-1", alias: "api_publica_tjsp", numero: "00013278820188260344" }]]);
+  const probe = await db.healthProbeForWorker("probe-1");
+
+  assert.equal(probe.numero, "00013278820188260344");
+  const consulta = textos()[0];
+  assert.match(consulta, /SELECT hp\.id,hp\.numero,hp\.alias,hp\.intervalo_minutos FROM health_probes hp/);
+  assert.equal(consulta.includes("monitored_processes"), false, "o número do probe não vem emprestado de item monitorado");
+  assert.deepEqual(consultas[0].parametros, ["probe-1"]);
+});
+
+test("alerta pendente nasce um por destinatário ativo e depende do índice único para deduplicar", async () => {
+  assert.equal(typeof db.createPendingAlerts, "function", "db.createPendingAlerts precisa existir");
+  reiniciar([
+    [{ user_id: "user-1" }, { user_id: "user-2" }],
+    [{ id: "alerta-1" }],
+    [],
+  ]);
+
+  const criados = await db.createPendingAlerts({
+    monitoredProcessId: "monitor-1",
+    snapshotAnteriorId: "snap-antigo",
+    snapshotAtualId: "snap-novo",
+    estagioAnterior: "nao_classificado",
+    estagioAtual: "expedicao_alvara",
+  });
+
+  assert.deepEqual(criados, [{ id: "alerta-1" }], "o segundo destinatário caiu no ON CONFLICT DO NOTHING");
+  const destinatarios = textos()[0];
+  assert.match(destinatarios, /portfolio_members pm/);
+  assert.match(destinatarios, /po\.creator_user_id/);
+  assert.match(destinatarios, /UNION/);
+  const insercao = textos()[1];
+  assert.match(insercao, /INSERT INTO pending_alerts/);
+  assert.match(insercao, /ON CONFLICT \(monitored_process_id,recipient_user_id,snapshot_atual_id\) DO NOTHING/);
+  assert.equal(consultas[1].parametros[1], "monitor-1");
+  assert.equal(consultas[1].parametros[2], "user-1");
+  assert.equal(consultas[1].parametros[3], "snap-antigo");
+  assert.equal(consultas[1].parametros[4], "snap-novo");
+});
+
+test("digest lê apenas alertas ainda não aceitos, de quem ainda tem acesso e sob o teto de tentativas", async () => {
+  assert.equal(typeof db.undeliveredAlerts, "function", "db.undeliveredAlerts precisa existir");
+  reiniciar([[{ id: "alerta-1", recipient_user_id: "user-1", email: "um@exemplo.test", numero: "00013278820188260344", estagio_anterior: null, estagio_atual: "expedicao_alvara" }]]);
+  const pendentes = await db.undeliveredAlerts();
+
+  assert.equal(pendentes.length, 1);
+  const consulta = textos()[0];
+  assert.match(consulta, /FROM pending_alerts pa/);
+  assert.match(consulta, /JOIN users u ON u\.id=pa\.recipient_user_id/);
+  assert.match(consulta, /NOT EXISTS \(SELECT 1 FROM alert_send_attempts asa WHERE asa\.pending_alert_id=pa\.id AND asa\.status='enviado'\)/);
+  assert.match(consulta, /pa\.expires_at > now\(\)/);
+  // Quem perdeu o acesso ao portfólio para de receber o número e o estágio.
+  assert.match(consulta, /JOIN portfolios po ON po\.id=mp\.portfolio_id/);
+  assert.match(consulta, /po\.creator_user_id=pa\.recipient_user_id/);
+  assert.match(consulta, /portfolio_members pm/);
+  assert.match(consulta, /pm\.user_id=pa\.recipient_user_id/);
+  assert.match(consulta, /pm\.expires_at > now\(\)/);
+  assert.match(consulta, /po\.expires_at > now\(\)/);
+  // Teto de três tentativas: endereço que rejeita não vira envio diário eterno.
+  assert.match(consulta, /SELECT count\(\*\) FROM alert_send_attempts asa WHERE asa\.pending_alert_id=pa\.id\) < 3/);
+});
+
+test("estágio conhecido do item monitorado é lido e gravado por linha, não por processo", async () => {
+  assert.equal(typeof db.updateMonitoredProcessStage, "function", "db.updateMonitoredProcessStage precisa existir");
+  reiniciar([[{ id: "monitor-1", process_id: "proc-1", numero: "00013278820188260344", alias: "api_publica_tjsp", estagio_conhecido: "nao_classificado", estagio_conhecido_codigo: null }], []]);
+
+  const monitorado = await db.monitoredProcessForWorker("monitor-1");
+  await db.updateMonitoredProcessStage("monitor-1", { estagio: "expedicao_alvara", codigo: 12548 });
+
+  assert.equal(monitorado.estagio_conhecido, "nao_classificado");
+  assert.match(textos()[0], /mp\.estagio_conhecido,mp\.estagio_conhecido_codigo/);
+  assert.match(textos()[1], /UPDATE monitored_processes SET estagio_conhecido=\$2,estagio_conhecido_codigo=\$3 WHERE id=\$1/);
+  assert.deepEqual(consultas[1].parametros, ["monitor-1", "expedicao_alvara", 12548]);
+});
+
+test("tentativa de envio e medição de saúde gravam com placeholders e expiração de 180 dias", async () => {
+  assert.equal(typeof db.recordAlertSendAttempt, "function", "db.recordAlertSendAttempt precisa existir");
+  assert.equal(typeof db.recordHealthMeasurement, "function", "db.recordHealthMeasurement precisa existir");
+  reiniciar([[], []]);
+
+  await db.recordAlertSendAttempt("alerta-1", { status: "falhou", erro: "email_rejeitado" });
+  await db.recordHealthMeasurement({ healthProbeId: "probe-1", status: "degradado", statusCode: 429, duracaoMs: 812 });
+
+  assert.match(textos()[0], /INSERT INTO alert_send_attempts \(id,pending_alert_id,status,erro,expires_at\) VALUES \(\$1,\$2,\$3,\$4,\$5\)/);
+  assert.equal(consultas[0].parametros[1], "alerta-1");
+  assert.equal(consultas[0].parametros[2], "falhou");
+  assert.equal(consultas[0].parametros[3], "email_rejeitado");
+  assert.match(textos()[1], /INSERT INTO tribunal_health_measurements \(id,health_probe_id,status,status_code,duracao_ms,expires_at\) VALUES \(\$1,\$2,\$3,\$4,\$5,\$6\)/);
+  assert.deepEqual(consultas[1].parametros.slice(1, 5), ["probe-1", "degradado", 429, 812]);
+});
+
+test("health probe é inserido apenas por criador e com valores parametrizados", async () => {
+  assert.equal(typeof db.createHealthProbe, "function", "db.createHealthProbe precisa existir");
+  reiniciar([[{ id: "probe-1", numero: "00013278820188260344", alias: "api_publica_tjsp", intervalo_minutos: 60 }]]);
+
+  const probe = await db.createHealthProbe("portfolio-1", "user-1", { numero: "00013278820188260344", alias: "api_publica_tjsp", intervaloMinutos: 60 });
+
+  assert.equal(probe.id, "probe-1");
+  const consulta = textos()[0];
+  assert.match(consulta, /INSERT INTO health_probes \(id,portfolio_id,numero,alias,intervalo_minutos,proxima_consulta_em,expires_at\)/);
+  assert.match(consulta, /WHERE id=\$2 AND creator_user_id=\$3 AND expires_at > now\(\)/);
+  assert.equal(consultas[0].parametros[1], "portfolio-1");
+  assert.equal(consultas[0].parametros[2], "user-1");
+  assert.equal(consultas[0].parametros[3], "00013278820188260344");
+  assert.equal(consultas[0].parametros[4], "api_publica_tjsp");
+  assert.equal(consultas[0].parametros[5], 60);
 });

@@ -544,3 +544,43 @@ anterior já registrou:
   compartilhada legado. Precisa de banco Neon próprio, não o de Preview.
 - O schedule de purge aponta para o alias da branch; renomear ou apagar
   `feature/p0-triagem` o deixa batendo em URL morta.
+
+---
+
+## P1 — validação local e homologação pendente
+
+O conteúdo abaixo separa P1 da evidência de Preview registrada acima. P1 foi validada por
+testes locais de contratos, automação e interface; **não houve migração P1, deploy, schedule
+ou homologação autenticada de P1 neste QA de Preview**.
+
+### Coberto localmente
+
+- Carteiras compartilhadas: criador pode administrar carteira, itens, membros e sondas;
+  membro ativo tem somente leitura; ausência de vínculo responde 404.
+- Consulta autenticada oferece `processId` para o criador monitorar o processo encontrado.
+- Workers verificam assinatura QStash sobre corpo bruto, preservam fluxo global de cinco
+  workers e aplicam orçamentos separados de 480 consultas/dia para monitoramento e 120 para
+  saúde.
+- Alertas surgem apenas em transição envolvendo TPU aprovado; digest agrupa destinatários,
+  só marca aceite 2xx do Resend como envio e não registra número CNJ em log.
+- Expurgo cobre as tabelas P1 e a retenção de carteiras, sondas, alertas e medições é de
+  até 180 dias.
+
+### Necessário antes do Preview P1
+
+1. Aplicar `0003-p1-consolidacao.sql` com `npm run db:migrate` no Neon de Preview.
+2. Configurar no Preview `DATABASE_URL`, SSO Entra, Redis, QStash, `APP_BASE_URL`,
+   `RESEND_API_KEY` e `RESEND_FROM_EMAIL`; nenhum segredo entra neste documento.
+3. Criar no QStash, apontando para URL estável do Preview, schedules assinados: horário para
+   `/api/monitor-worker`, horário para `/api/health-worker` e `0 11 * * *` UTC para
+   `/api/digest-worker` (08:00 BRT). Incluir bypass Vercel quando Deployment Protection estiver ativa.
+4. Homologar com sessão Entra: carteira, convite de membro existente, inclusão a partir de
+   consulta DataJud, leitura de histórico, execução dos dois ticks e digest aceito e recusado.
+5. Confirmar em logs e no banco que orçamento, assinatura, retenção e dados processuais
+   seguem as regras acima, sem número CNJ completo nos logs.
+
+### Produção P1
+
+Produção continua pendente. Repetir os pré-requisitos e a homologação com Neon, Resend,
+QStash e `APP_BASE_URL` próprios de Produção. Não promover esta seção local como evidência
+de funcionamento em Preview ou Produção.

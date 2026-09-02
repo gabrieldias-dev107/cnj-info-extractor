@@ -176,7 +176,11 @@ export default async function handler(req, res) {
       var emCache = await freshSnapshot(digitos);
       if (emCache) {
         log("info", "consulta_cache", { reqId: reqId, alias: alias, numero: sufixo(digitos) });
-        return res.status(200).json(Object.assign({}, emCache.dados, { cache: "servidor", estagio: emCache.estagio }));
+        return res.status(200).json(Object.assign({}, emCache.dados, {
+          cache: "servidor",
+          estagio: emCache.estagio,
+          processId: emCache.processId,
+        }));
       }
     }
 
@@ -238,6 +242,7 @@ export default async function handler(req, res) {
         var salvoVazio = await persistSnapshot({ numero: digitos, alias: alias, dados: vazio });
         await recordConsultation(usuario.id, salvoVazio.processId, "unitaria");
         vazio.estagio = salvoVazio.estagio;
+        vazio.processId = salvoVazio.processId;
       }
       res.status(200).json(vazio);
       return;
@@ -253,10 +258,16 @@ export default async function handler(req, res) {
     });
 
     var resposta = { encontrado: true, total: processos.length, processos: processos };
+    // `processId` acompanha `estagio`: nasce da persistência, então só existe no
+    // modo com SSO. É ele que permite incluir o processo numa carteira logo
+    // depois da consulta — sem isso, `POST /api/portfolios/items` não tem como
+    // ser chamado por ninguém. Não é dado do processo, é o identificador da
+    // linha em `processes`, estável por número.
     if (ssoConfigurado()) {
       var salvo = await persistSnapshot({ numero: digitos, alias: alias, dados: resposta });
       await recordConsultation(usuario.id, salvo.processId, "unitaria");
       resposta.estagio = salvo.estagio;
+      resposta.processId = salvo.processId;
     }
     res.status(200).json(resposta);
   } catch (e) {

@@ -108,7 +108,20 @@
     resultado.appendChild(el("p", "titulo-resultado", d.formatado));
     resultado.appendChild(grade(cards));
 
+    anexarSugestoes(d);
     montarBotaoConsulta(d);
+  }
+
+  // Dígito verificador errado quase sempre é erro de digitação. Mostramos os
+  // números próximos que passam no DV — como candidatos clicáveis, nunca como
+  // correção automática: trocar o número do processo por conta própria é o tipo
+  // de "ajuda" que faz alguém consultar o processo errado.
+  function anexarSugestoes(d) {
+    if (d.valido) return;
+    var p1 = global.P1Ui;
+    if (!p1 || !p1.blocoSugestoes) return;
+    var bloco = p1.blocoSugestoes(d.digitos, function (numero) { usarExemplo(C.format(numero)); });
+    if (bloco) resultado.appendChild(bloco);
   }
 
   // Cria o botão "Consultar online" (só faz sentido com número válido).
@@ -145,12 +158,13 @@
     try {
       var r = await Api.consultarProcesso(digitos);
       if (idConsulta !== consultaSeq) return;
+      registrarSaudeTribunal(digitos, null);
       logoutButton.hidden = false;
       if (!r.encontrado || !(r.processos || []).length) {
         setOnlineEstado("vazio", "Processo não encontrado na base pública do DataJud.");
         return;
       }
-      renderOnline(r.processos, !!r._cache, r.estagio);
+      renderOnline(r.processos, !!r._cache, r.estagio, r.processId);
     } catch (e) {
       if (idConsulta !== consultaSeq) return;
       if (e && e.message === "autenticacao_necessaria") {
@@ -163,8 +177,19 @@
         Api.iniciarSso();
         return;
       }
+      registrarSaudeTribunal(digitos, e && e.message);
       setOnlineEstado("erro", mensagemErro(e && e.message));
     }
+  }
+
+  // O resultado de cada consulta é a única medição de saúde que este navegador
+  // consegue observar: a API de sondas devolve a configuração, não a medição.
+  // O painel de sondas usa isso para marcar o tribunal como degradado.
+  function registrarSaudeTribunal(digitos, codigo) {
+    var p1 = global.P1Ui;
+    if (!p1 || !p1.registrarEstadoTribunal) return;
+    var alias = T.deriveAlias(digitos.slice(13, 14), digitos.slice(14, 16)).alias;
+    if (alias) p1.registrarEstadoTribunal(alias, codigo);
   }
 
   function setOnlineEstado(estado, msg) {
@@ -195,7 +220,11 @@
   // Taxonomia do proxy (api/datajud.js) traduzida para o usuário. Distinguir a
   // falha do tribunal da nossa é o ponto: "não encontrado" e "tribunal fora do ar"
   // levam a decisões opostas na triagem.
-  function mensagemErro(code) {
+  //
+  // `mensagemBase` devolve null para código que não conhece: quem completa é a
+  // tabela de js/p1-ui.js, com os códigos que nasceram no P1. Assim nenhuma
+  // frase existe em dois lugares.
+  function mensagemBase(code) {
     switch (code) {
       case "alias_desconhecido":
       case "alias_invalido":
@@ -244,8 +273,15 @@
       case "erro_servidor":
         return "Não foi possível consultar o DataJud agora. Tente novamente em instantes.";
       default:
-        return "Não foi possível concluir a consulta.";
+        return null;
     }
+  }
+
+  function mensagemErro(code) {
+    var p1 = global.P1Ui && global.P1Ui.mensagemP1;
+    return mensagemBase(code) ||
+      (p1 && p1(code)) ||
+      "Não foi possível concluir a consulta.";
   }
 
   // --- render do resultado online --------------------------------------------
@@ -296,7 +332,7 @@
     return bloco;
   }
 
-  function renderOnline(processos, fromCache, estagio) {
+  function renderOnline(processos, fromCache, estagio, processId) {
     limpar(resultadoOnline);
     resultadoOnline.className = "resultado-online ok";
 
@@ -311,6 +347,7 @@
     }
     resultadoOnline.appendChild(titulo);
     if (estagio) resultadoOnline.appendChild(blocoEstagio(estagio));
+    anexarAcaoMonitorar(processId);
 
     var corpo = el("div", "instancia-corpo");
 
@@ -359,6 +396,16 @@
     resultadoOnline.appendChild(corpo);
     if (processos.length > 1) corpo.setAttribute("aria-labelledby", "instancia-tab-0");
     renderInstancia(corpo, processos[0]);
+  }
+
+  // Acabou de achar o processo é o momento em que faz sentido dizer "acompanhe
+  // este". O identificador vem da própria resposta, então não há nada para o
+  // usuário copiar ou digitar. Sem P1Ui ou sem SSO, nada é desenhado.
+  function anexarAcaoMonitorar(processId) {
+    var p1 = global.P1Ui;
+    if (!p1 || !p1.blocoMonitorar) return;
+    var bloco = p1.blocoMonitorar(processId);
+    if (bloco) resultadoOnline.appendChild(bloco);
   }
 
   function renderInstancia(corpo, p) {
@@ -672,6 +719,9 @@
 
     aoDigitar(); // estado inicial
   }
+
+  // Único ponto de contato com js/p1-ui.js: a tabela de mensagens herdadas.
+  global.CNJApp = { mensagemBase: mensagemBase };
 
   if (doc.readyState === "loading") {
     doc.addEventListener("DOMContentLoaded", init);

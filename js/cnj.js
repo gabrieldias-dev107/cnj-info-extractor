@@ -53,6 +53,38 @@
     return digitoEsperado(parsed) === parsed.verificador;
   }
 
+  // Sugere candidatos que passam no DV, sem corrigir ou alterar a entrada.
+  // A interface decide se o usuário quer aplicar um deles.
+  function sugerirCorrecoes(raw) {
+    var digitos = normalize(raw);
+    var parsed = parse(digitos);
+    if (!parsed || validate(parsed)) return [];
+
+    var candidatos = new Map();
+    function adicionar(numero, tipo) {
+      if (numero === digitos || candidatos.has(numero)) return;
+      if (validate(parse(numero))) candidatos.set(numero, { numero: numero, tipo: tipo });
+    }
+
+    for (var indice = 0; indice < digitos.length; indice += 1) {
+      for (var digito = 0; digito <= 9; digito += 1) {
+        var substituto = String(digito);
+        if (substituto === digitos.charAt(indice)) continue;
+        adicionar(digitos.slice(0, indice) + substituto + digitos.slice(indice + 1), "um_digito");
+      }
+    }
+
+    for (var posicao = 0; posicao < digitos.length - 1; posicao += 1) {
+      if (digitos.charAt(posicao) === digitos.charAt(posicao + 1)) continue;
+      adicionar(
+        digitos.slice(0, posicao) + digitos.charAt(posicao + 1) + digitos.charAt(posicao) + digitos.slice(posicao + 2),
+        "transposicao_adjacente",
+      );
+    }
+
+    return Array.from(candidatos.values());
+  }
+
   // Junta parse + tabelas + validação numa descrição pronta para exibir.
   function describe(raw) {
     var parsed = parse(raw);
@@ -79,6 +111,7 @@
     format: format,
     parse: parse,
     validate: validate,
+    sugerirCorrecoes: sugerirCorrecoes,
     digitoEsperado: digitoEsperado,
     describe: describe,
   };

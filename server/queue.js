@@ -14,15 +14,34 @@ function cabecalhosDestino() {
   return segredo ? { "x-vercel-protection-bypass": segredo } : undefined;
 }
 
-export async function publishBatchItem(itemId) {
+// Uma única chave de flow control para todo o tráfego que sai daqui rumo ao
+// DataJud: lote manual e automação P1 dividem os mesmos cinco trabalhadores,
+// em vez de a automação abrir uma segunda faixa de concorrência.
+const FLUXO_DATAJUD = { key: "cnj-datajud-batch", parallelism: 5 };
+
+function publicar(caminho, body) {
   const client = new Client({ token: required("QSTASH_TOKEN") });
   return client.publishJSON({
-    url: required("APP_BASE_URL") + "/api/batch-worker",
-    body: { itemId },
+    url: required("APP_BASE_URL") + caminho,
+    body,
     headers: cabecalhosDestino(),
     retries: 3,
-    flowControl: { key: "cnj-datajud-batch", parallelism: 5 },
+    flowControl: FLUXO_DATAJUD,
   });
+}
+
+export async function publishBatchItem(itemId) {
+  return publicar("/api/batch-worker", { itemId });
+}
+
+// Só identificadores viajam pela fila; o número CNJ é lido do banco dentro do
+// worker e nunca entra no corpo publicado.
+export async function publishMonitoredProcess(monitoredProcessId) {
+  return publicar("/api/monitor-item-worker", { monitoredProcessId });
+}
+
+export async function publishHealthProbe(healthProbeId) {
+  return publicar("/api/health-item-worker", { healthProbeId });
 }
 export async function verifyQstash(req, body) {
   // required() fica fora do try: chave de assinatura ausente é erro de

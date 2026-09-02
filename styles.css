@@ -427,3 +427,229 @@ footer {
 }
 .tabela-lote tr:last-child td { border-bottom: none; }
 .tabela-lote .numero-lote { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- Consolidação P1: glossário, carteiras, membros, sondas e histórico ---- */
+.p1 {
+  margin-top: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.p1 h2 { margin: 0; color: var(--brand-ink); font-size: 1.15rem; }
+.p1 > p { color: var(--muted); max-width: 62ch; }
+.p1 label,
+.p1 .p1-rotulo { display: block; font-weight: 600; margin: 1rem 0 .5rem; }
+.p1 input {
+  width: 100%;
+  max-width: 26rem;
+  min-height: 44px;
+  padding: .6rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.p1 input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 4px rgba(31, 78, 140, .12);
+}
+.p1 .btn-consultar,
+.p1 .btn-secundario { margin-top: .75rem; }
+.p1-status { min-height: 1.5rem; font-size: .9rem; }
+.p1-vazio { color: var(--muted); font-size: .9rem; }
+
+/* Glossário TPU */
+.glossario-lista { list-style: none; margin: 1rem 0 0; padding: 0; }
+.glossario-lista li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .6rem;
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.glossario-lista li:last-child { border-bottom: none; }
+.glossario-codigo {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-weight: 700;
+  color: var(--brand);
+}
+.glossario-descricao { font-weight: 600; }
+.glossario-versao { font-size: .78rem; color: var(--muted); }
+
+/* Seletor de carteira */
+.p1-lista { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.p1-portfolio-btn {
+  font: inherit;
+  font-size: .9rem;
+  cursor: pointer;
+  min-height: 44px;
+  padding: .4rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand);
+}
+.p1-portfolio-btn:hover { background: #eef3fb; border-color: var(--brand); }
+.p1-portfolio-btn[aria-pressed="true"] {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* Detalhe da carteira */
+.p1-detalhe { margin-top: 1.5rem; }
+.p1-detalhe-titulo { margin: 0 0 .5rem; color: var(--brand-ink); font-size: 1.05rem; }
+.p1-aviso {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: var(--radius);
+  padding: .75rem 1rem;
+  margin: 0 0 1rem;
+  font-size: .9rem;
+}
+.p1-bloco { margin-top: 1.75rem; }
+.p1-bloco-titulo { margin: 0 0 .35rem; color: var(--brand-ink); font-size: .98rem; }
+.p1-bloco-ajuda { color: var(--muted); font-size: .85rem; margin: 0 0 .75rem; max-width: 62ch; }
+
+.p1-tabela-wrap {
+  margin-top: .75rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.p1-tabela { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.p1-tabela th,
+.p1-tabela td {
+  padding: .45rem .7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.p1-tabela th { background: var(--surface); color: var(--brand-ink); font-weight: 600; white-space: nowrap; }
+.p1-tabela tr:last-child td { border-bottom: none; }
+.p1-tabela .p1-numero { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p1-tabela input {
+  width: 6rem;
+  min-height: 36px;
+  margin: 0;
+  padding: .25rem .4rem;
+}
+
+.p1-membros { list-style: none; margin: .75rem 0 0; padding: 0; }
+.p1-membros li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  padding: .45rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.p1-membros li:last-child { border-bottom: none; }
+.p1-membro-email { word-break: break-all; }
+
+.p1-remover-item,
+.p1-remover-membro,
+.p1-remover-probe,
+.p1-salvar-item,
+.p1-ver-historico {
+  font: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+  min-height: 36px;
+  margin-right: .35rem;
+  padding: .25rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand);
+}
+.p1-remover-item:hover,
+.p1-remover-membro:hover,
+.p1-remover-probe:hover { border-color: var(--erro); color: var(--erro); }
+.p1-salvar-item:hover,
+.p1-ver-historico:hover { background: #eef3fb; border-color: var(--brand); }
+
+.p1-sinal-tribunal { font-size: .8rem; color: var(--muted); white-space: nowrap; }
+
+/* Correções candidatas — nunca aplicadas sozinhas */
+.sugestoes {
+  margin-top: 1.25rem;
+  padding: .9rem 1rem;
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+}
+.sugestoes-titulo { margin: 0 0 .6rem; font-size: .9rem; font-weight: 600; color: var(--warn); }
+.sugestoes-nota { margin: .6rem 0 0; font-size: .8rem; color: var(--warn); }
+.sugestao {
+  font: inherit;
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  min-height: 44px;
+  margin: 0 .4rem .4rem 0;
+  padding: .35rem .8rem;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand-ink);
+}
+.sugestao:hover { background: #fff; border-color: var(--brand); }
+.p1-sugestoes-campo:empty { display: none; }
+
+/* Histórico e diff */
+.p1-delta {
+  margin: 0 0 1rem;
+  padding: .75rem 1rem;
+  border-radius: var(--radius);
+  background: #eef3fb;
+  font-size: .9rem;
+}
+.p1-delta-rotulo { font-weight: 600; color: var(--brand-ink); }
+.p1-status-entrar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.p1-entrar {
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  padding: .35rem .9rem;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius);
+  background: var(--brand);
+  color: #fff;
+}
+.p1-entrar:hover { background: var(--brand-ink); }
+
+@media (max-width: 520px) {
+  .p1 input { max-width: 100%; }
+  .p1-membros li { align-items: flex-start; flex-direction: column; gap: .35rem; }
+}
+
+/* Ação de monitorar, junto do resultado da consulta online */
+.p1-monitorar-acao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin: 0 0 1.25rem;
+}
+.p1-monitorar {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  padding: .5rem 1rem;
+  border: 1px solid var(--brand);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--brand-ink);
+}
+.p1-monitorar:hover { background: #eef3fb; }
+.p1-monitorar:disabled { opacity: .5; cursor: not-allowed; }
+.p1-monitorar-erro { color: var(--erro); font-size: .85rem; }

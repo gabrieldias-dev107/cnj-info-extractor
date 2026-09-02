@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -31,4 +31,25 @@ test("todo módulo de api/ e server/ resolve seus imports", async () => {
     }
   }
   assert.deepEqual(falhas, []);
+});
+
+test("documentação operacional lista rotas P1 e variáveis do Resend", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const env = readFileSync(".env.example", "utf8");
+  const rotas = [
+    "/api/portfolios",
+    "/api/portfolios/items",
+    "/api/portfolios/members",
+    "/api/health-probes",
+    "/api/process-history",
+    "/api/monitor-worker",
+    "/api/monitor-item-worker",
+    "/api/health-worker",
+    "/api/health-item-worker",
+    "/api/digest-worker",
+  ];
+
+  for (const rota of rotas) assert.ok(readme.includes(rota), "README sem " + rota);
+  assert.match(env, /^RESEND_API_KEY=$/m);
+  assert.match(env, /^RESEND_FROM_EMAIL=$/m);
 });
