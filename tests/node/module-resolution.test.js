@@ -33,7 +33,7 @@ test("todo módulo de api/ e server/ resolve seus imports", async () => {
   assert.deepEqual(falhas, []);
 });
 
-test("documentação operacional lista rotas P1 e variáveis do Resend", () => {
+test("documentação operacional lista rotas P1/P2 e variáveis novas", () => {
   const readme = readFileSync("README.md", "utf8");
   const env = readFileSync(".env.example", "utf8");
   const rotas = [
@@ -47,11 +47,25 @@ test("documentação operacional lista rotas P1 e variáveis do Resend", () => {
     "/api/health-worker",
     "/api/health-item-worker",
     "/api/digest-worker",
+    "/api/service-tokens",
+    "/api/audit",
+    "/api/v1/decodificar",
+    "/api/v1/processos",
   ];
 
   for (const rota of rotas) assert.ok(readme.includes(rota), "README sem " + rota);
   assert.match(env, /^RESEND_API_KEY=$/m);
   assert.match(env, /^RESEND_FROM_EMAIL=$/m);
+  assert.match(env, /^# RL_API_TOKEN_DIA=/m);
+  assert.match(env, /^# RL_API_TOKEN_MIN=/m);
+});
+
+// A URL da agregadora é detalhe de implementação; documentá-la como endpoint
+// convidaria integrador a depender dela e a driblar o rewrite.
+test("documentação avisa que a URL da agregadora não é contrato", () => {
+  const readme = readFileSync("README.md", "utf8");
+  assert.match(readme, /não é contrato/);
+  assert.ok(readFileSync("docs/retencao.md", "utf8").includes("audit_events"), "política de retenção sem audit_events");
 });
 
 test("Vercel mantém as rotas P1 em no máximo 12 Functions", () => {
@@ -73,6 +87,10 @@ test("Vercel mantém as rotas P1 em no máximo 12 Functions", () => {
     "/api/monitor-item-worker": "/api/p1-monitor-handler?handler=item",
     "/api/health-worker": "/api/p1-health-handler?handler=tick",
     "/api/health-item-worker": "/api/p1-health-handler?handler=item",
+    "/api/service-tokens": "/api/p1-query-handler?handler=service-tokens",
+    "/api/audit": "/api/p1-query-handler?handler=audit",
+    "/api/v1/decodificar": "/api/p1-query-handler?handler=v1-decodificar",
+    "/api/v1/processos": "/api/p1-query-handler?handler=v1-processos",
   };
 
   for (const [source, destination] of Object.entries(rotasConsolidadas)) {
