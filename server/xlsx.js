@@ -1,4 +1,5 @@
 import { inflateRawSync } from "node:zlib";
+import { COLUNAS_LOTE, linhasDoLote } from "./batch-export.js";
 
 const LIMITE_XLSX = 2 * 1024 * 1024;
 const CRC = (() => {
@@ -118,8 +119,9 @@ export function lerPlanilhaXlsx(bruto) {
 }
 
 export function xlsxDeLote(itens) {
-  const colunas = ["linha", "numero", "status", "erro", "estagio"];
-  const linhas = [colunas, ...(Array.isArray(itens) ? itens.map((item) => colunas.map((coluna) => item[coluna])) : [])];
+  // Mesmas colunas do CSV, montadas pelo mesmo módulo: dois formatos com listas
+  // divergentes já foi bug uma vez.
+  const linhas = [COLUNAS_LOTE, ...linhasDoLote(itens)];
   const corpo = linhas.map((linha, y) => "<row r=\"" + (y + 1) + "\">" + linha.map((valor, x) => "<c r=\"" + coluna(x) + (y + 1) + "\" t=\"inlineStr\"><is><t>" + xml(valor) + "</t></is></c>").join("") + "</row>").join("");
   return zipStore([
     { nome: "[Content_Types].xml", dados: "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>" },

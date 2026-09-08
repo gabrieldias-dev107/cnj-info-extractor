@@ -76,6 +76,17 @@ export const IDS_PADRAO = {
   "historico-numero": "input",
   "historico-status": "p",
   "historico-resultado": "div",
+  "tokens-status": "p",
+  "token-form": "form",
+  "token-nome": "input",
+  "token-limite": "input",
+  "token-emitido": "div",
+  "tokens-lista": "div",
+  "trilha-status": "p",
+  "trilha-lista": "div",
+  "trilha-anterior": "button",
+  "trilha-proxima": "button",
+  "trilha-atualizar": "button",
 };
 
 export function documentoFake(ids = IDS_PADRAO) {

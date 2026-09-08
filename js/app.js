@@ -164,7 +164,7 @@
         setOnlineEstado("vazio", "Processo não encontrado na base pública do DataJud.");
         return;
       }
-      renderOnline(r.processos, !!r._cache, r.estagio, r.processId);
+      renderOnline(r.processos, !!r._cache, r.estagio, r.processId, r.score);
     } catch (e) {
       if (idConsulta !== consultaSeq) return;
       if (e && e.message === "autenticacao_necessaria") {
@@ -332,7 +332,61 @@
     return bloco;
   }
 
-  function renderOnline(processos, fromCache, estagio, processId) {
+  // Rótulos das faixas de prioridade. Nomes neutros de propósito: a faixa
+  // ordena a fila de análise, não classifica o processo como bom ou ruim.
+  var ROTULO_FAIXA = {
+    prioridade_alta: "Prioridade alta",
+    prioridade_media: "Prioridade média",
+    prioridade_baixa: "Prioridade baixa",
+  };
+
+  var TIPO_FAIXA = {
+    prioridade_alta: "ok",
+    prioridade_media: "warn",
+    prioridade_baixa: "warn",
+  };
+
+  var ROTULO_CONFIANCA = { alta: "confiança alta", media: "confiança média", baixa: "confiança baixa" };
+
+  // A faixa nunca aparece sozinha. Confiança, fatores e ressalva saem no mesmo
+  // bloco porque o maior risco desta entrega é a faixa ser lida como certeza —
+  // ela é indício da base pública, com pesos ainda não aprovados pela área de
+  // risco, e não é decisão de crédito.
+  function blocoScore(score) {
+    var bloco = el("section", "score");
+    bloco.setAttribute("aria-label", "Faixa de prioridade");
+
+    var cabecalho = el("p", "score-cabecalho");
+    cabecalho.appendChild(el("span", "score-rotulo", "Faixa de prioridade: "));
+    cabecalho.appendChild(badge(ROTULO_FAIXA[score.faixa] || "Não calculada", TIPO_FAIXA[score.faixa] || "warn"));
+    cabecalho.appendChild(doc.createTextNode(" "));
+    cabecalho.appendChild(badge(ROTULO_CONFIANCA[score.confianca] || "confiança baixa", score.confianca === "alta" ? "ok" : "warn"));
+    if (score.pontos !== null && score.pontos !== undefined) {
+      cabecalho.appendChild(doc.createTextNode(" " + score.pontos + " ponto(s)."));
+    }
+    bloco.appendChild(cabecalho);
+
+    bloco.appendChild(el("p", "score-ressalva", score.ressalva || ""));
+
+    var fatores = Array.isArray(score.fatores) ? score.fatores : [];
+    if (fatores.length) {
+      var detalhes = el("details", "score-fatores");
+      detalhes.appendChild(el("summary", null, "Como esta faixa foi calculada"));
+      var lista = el("ul", "score-lista");
+      fatores.forEach(function (fator) {
+        var item = doc.createElement("li");
+        item.appendChild(el("span", "score-fator", fator.fator));
+        item.appendChild(doc.createTextNode(" " + fator.pontos + " ponto(s) — " + fator.motivo));
+        lista.appendChild(item);
+      });
+      detalhes.appendChild(lista);
+      detalhes.appendChild(el("p", "score-versao", "Regra " + (score.versao || "—") + "; fonte " + (score.fonte || "—") + "."));
+      bloco.appendChild(detalhes);
+    }
+    return bloco;
+  }
+
+  function renderOnline(processos, fromCache, estagio, processId, score) {
     limpar(resultadoOnline);
     resultadoOnline.className = "resultado-online ok";
 
@@ -347,6 +401,7 @@
     }
     resultadoOnline.appendChild(titulo);
     if (estagio) resultadoOnline.appendChild(blocoEstagio(estagio));
+    if (score) resultadoOnline.appendChild(blocoScore(score));
     anexarAcaoMonitorar(processId);
 
     var corpo = el("div", "instancia-corpo");
@@ -584,7 +639,7 @@
     }
     var tabela = el("table", "tabela-lote");
     var cabecalho = el("tr");
-    ["Linha", "Número", "Situação", "Estágio (TPU)"].forEach(function (texto) {
+    ["Linha", "Número", "Situação", "Estágio (TPU)", "Faixa (indício)", "Confiança"].forEach(function (texto) {
       var th = el("th", null, texto);
       th.scope = "col";
       cabecalho.appendChild(th);
@@ -599,10 +654,21 @@
       var situacao = ROTULO_STATUS_ITEM[item.status] || item.status;
       linha.appendChild(el("td", null, item.erro ? situacao + " — " + item.erro : situacao));
       linha.appendChild(el("td", null, item.status === "concluido" ? rotuloEstagio(item.estagio) : "—"));
+      // `score_faixa` e `score_confianca` chegam em snake_case porque
+      // GET /api/batches devolve a linha do Neon como veio, igual a `estagio`.
+      // A confiança tem coluna própria: sem ela, uma faixa apoiada em movimento
+      // TPU curado fica indistinguível de outra tirada só de sinais secundários.
+      linha.appendChild(el("td", null, item.score_faixa ? (ROTULO_FAIXA[item.score_faixa] || item.score_faixa) : "—"));
+      linha.appendChild(el("td", null, item.score_faixa ? (ROTULO_CONFIANCA[item.score_confianca] || "confiança baixa") : "—"));
       corpo.appendChild(linha);
     });
     tabela.appendChild(corpo);
     batchItens.appendChild(tabela);
+    // A ressalva fica ao lado da tabela, não em cada linha: a coluna sozinha é
+    // exatamente o que não pode ser lido como decisão.
+    batchItens.appendChild(el("p", "score-ressalva",
+      "A faixa é indício derivado da base pública do DataJud, com pesos semente " +
+      "pendentes de aprovação da área de risco. Não é decisão de crédito nem certidão."));
     batchItens.hidden = false;
   }
 

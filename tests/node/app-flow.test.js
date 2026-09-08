@@ -211,8 +211,8 @@ test("painel do lote lista cada linha com situação e estágio", async () => {
       total: 2,
       contagens: { concluido: 1, invalido: 1 },
       itens: [
-        { linha: 1, numero: "00013278820188260344", status: "concluido", erro: null, estagio: "expedicao_alvara" },
-        { linha: 2, numero: "123", status: "invalido", erro: "numero_invalido", estagio: null },
+        { linha: 1, numero: "00013278820188260344", status: "concluido", erro: null, estagio: "expedicao_alvara", score_faixa: "prioridade_alta", score_confianca: "alta" },
+        { linha: 2, numero: "123", status: "invalido", erro: "numero_invalido", estagio: null, score_faixa: null },
       ],
     }),
   };
@@ -231,6 +231,16 @@ test("painel do lote lista cada linha com situação e estágio", async () => {
   assert.match(texto, /Concluído/);
   assert.match(texto, /Expedição de alvará/);
   assert.match(texto, /Número inválido — numero_invalido/);
+  // A faixa entra como coluna própria, e a ressalva fica ao lado da tabela:
+  // coluna sozinha é exatamente o que não pode ser lido como decisão.
+  assert.match(texto, /Faixa \(indício\)/);
+  assert.match(texto, /Prioridade alta/);
+  // Confiança tem coluna própria: faixa apoiada em TPU curado não pode ficar
+  // indistinguível de faixa tirada só de sinais secundários.
+  assert.match(texto, /Confiança/);
+  assert.match(texto, /confiança alta/);
+  assert.match(texto, /pendentes de aprovação da área de risco/);
+  assert.match(texto, /Não é decisão de crédito/);
   // Sem innerHTML: cada célula é um nó de texto criado pelo app.
   assert.ok(achar(painel, (node) => node.tagName === "TABLE"));
   assert.equal(document.getElementById("batch-export").hidden, false);
@@ -351,4 +361,81 @@ test("resultado da consulta online oferece monitorar o processo encontrado", asy
   await acao.click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(incluidos, [["11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1440]]);
+});
+
+// O maior risco desta entrega é a faixa ser lida como certeza. Onde ela aparece,
+// aparecem também confiança, fatores e ressalva.
+test("consulta online mostra a faixa sempre acompanhada de confiança e ressalva", async () => {
+  const document = documentoFake();
+  const score = {
+    faixa: "prioridade_media",
+    pontos: 45,
+    confianca: "baixa",
+    fatores: [
+      { fator: "estagio_tpu", pontos: 0, motivo: "Nenhum movimento com código TPU curado foi encontrado." },
+      { fator: "grau", pontos: 15, motivo: "Grau G1." },
+    ],
+    versao: "score-2026-09-08-semente-1",
+    aprovadaPorRisco: false,
+    fonte: "indicio_publico_datajud",
+    ressalva: "Estágio processual desconhecido: pesos semente pendentes de aprovação da área de risco.",
+  };
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({
+      encontrado: true,
+      total: 1,
+      processos: [{ grau: "G1", tribunal: "TJSP", movimentos: [] }],
+      estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-2026-04-09-semente-1" },
+      score,
+    }),
+  };
+  const global = contexto(document, api);
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  const input = document.getElementById("cnj-input");
+  input.value = "00013278820188260344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (node) => node.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const online = document.getElementById("resultado-online");
+  const texto = online.textContent;
+  assert.match(texto, /Faixa de prioridade/);
+  assert.match(texto, /Prioridade média/);
+  assert.match(texto, /confiança baixa/);
+  assert.match(texto, /45 ponto\(s\)/);
+  assert.match(texto, /pesos semente pendentes de aprovação da área de risco/);
+  // Cada fator explica a própria pontuação — é o que torna a regra auditável.
+  assert.match(texto, /estagio_tpu/);
+  assert.match(texto, /Nenhum movimento com código TPU curado/);
+  assert.match(texto, /score-2026-09-08-semente-1/);
+  assert.match(texto, /indicio_publico_datajud/);
+  assert.ok(achar(online, (node) => node.className === "score"), "a faixa mora no próprio bloco");
+});
+
+test("resposta sem score não desenha bloco de faixa nenhum", async () => {
+  const document = documentoFake();
+  const api = {
+    verificarSessao: async () => true,
+    iniciarSso() {},
+    entrar: async () => true,
+    sair: async () => true,
+    consultarProcesso: async () => ({ encontrado: true, total: 1, processos: [{ grau: "G1", movimentos: [] }] }),
+  };
+  const global = contexto(document, api);
+  vm.runInContext(readFileSync("js/app.js", "utf8"), vm.createContext(global), { filename: "js/app.js" });
+
+  const input = document.getElementById("cnj-input");
+  input.value = "00013278820188260344";
+  await input.dispatch("input");
+  await achar(document.getElementById("resultado"), (node) => node.className === "btn-consultar").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const online = document.getElementById("resultado-online");
+  assert.equal(achar(online, (node) => node.className === "score"), null);
+  assert.equal(online.textContent.includes("Faixa de prioridade"), false);
 });

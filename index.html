@@ -110,6 +110,43 @@
       <div id="historico-resultado" class="p1-detalhe"></div>
     </section>
 
+    <section class="p2 tokens modulo-operacional" aria-labelledby="tokens-titulo">
+      <h2 id="tokens-titulo">Tokens de serviço (API interna)</h2>
+      <p>
+        Um token permite que outro sistema chame <code>POST /api/v1/decodificar</code> e
+        <code>POST /api/v1/processos</code> com o header <code>Authorization: Bearer</code>.
+        Você emite, vê e revoga apenas os seus. O valor aparece uma única vez: o servidor
+        guarda somente o hash.
+      </p>
+      <p id="tokens-status" class="p1-status" role="status" aria-live="polite"></p>
+      <form id="token-form" hidden>
+        <label for="token-nome">Nome do token</label>
+        <input id="token-nome" type="text" maxlength="120" autocomplete="off" required>
+        <label for="token-limite">Limite de chamadas por dia (opcional)</label>
+        <input id="token-limite" type="number" min="1" max="10000" step="1" inputmode="numeric" autocomplete="off">
+        <button id="token-emitir" class="btn-consultar" type="submit">Emitir token</button>
+      </form>
+      <div id="token-emitido" class="p2-token-emitido" role="status" aria-live="polite" hidden></div>
+      <div id="tokens-lista" class="p1-lista"></div>
+    </section>
+
+    <section class="p2 trilha modulo-operacional" aria-labelledby="trilha-titulo">
+      <h2 id="trilha-titulo">Trilha de auditoria</h2>
+      <p>
+        Registro das ações feitas em seu nome: consultas, leituras de histórico,
+        exportações, concessões de acesso e uso de token — inclusive as tentativas
+        recusadas. Você vê apenas os próprios eventos, e o número do processo nunca é
+        gravado aqui. Os registros são apagados após 180 dias.
+      </p>
+      <p id="trilha-status" class="p1-status" role="status" aria-live="polite"></p>
+      <div id="trilha-lista" class="p1-lista"></div>
+      <div class="p2-trilha-acoes">
+        <button id="trilha-anterior" class="btn-secundario" type="button">Anteriores</button>
+        <button id="trilha-proxima" class="btn-secundario" type="button">Próximos</button>
+        <button id="trilha-atualizar" class="btn-secundario" type="button">Atualizar</button>
+      </div>
+    </section>
+
     <section class="ajuda modulo-referencia">
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
@@ -147,7 +184,9 @@
   <script src="js/cnj.js"></script>
   <script src="js/api.js"></script>
   <script src="js/p1-api.js"></script>
+  <script src="js/p2-api.js"></script>
   <script src="js/app.js"></script>
   <script src="js/p1-ui.js"></script>
+  <script src="js/p2-ui.js"></script>
 </body>
 </html>

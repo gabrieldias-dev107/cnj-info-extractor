@@ -168,6 +168,30 @@ dd { margin: 0; color: var(--cnj-text-subtle); }
 .p1-delta { margin: 0 0 16px; padding: 12px; border-radius: var(--cnj-radius-small); background: var(--cnj-surface-selected); color: var(--cnj-text); font-size: 14px; }
 .p1-delta-rotulo { color: var(--cnj-text); font-weight: 700; }
 .p1-monitorar-erro { color: var(--cnj-danger); font-size: 13px; }
+/* --- P2: faixa de prioridade, tokens de serviço e trilha de auditoria --- */
+/* A faixa é indício: nunca ganha peso visual maior que o do estágio TPU, e a
+   ressalva fica no mesmo bloco, sem recuo nem cinza que a faça sumir. */
+.score { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--cnj-border); border-left: 4px solid var(--cnj-warning); border-radius: var(--cnj-radius-small); background: var(--cnj-surface-sunken); }
+.score-cabecalho { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; color: var(--cnj-text-subtle); font-size: 14px; }
+.score-rotulo { color: var(--cnj-text); font-weight: 700; }
+.score-ressalva { max-width: 84ch; margin: 8px 0 0; color: var(--cnj-text-subtle); font-size: 13px; }
+.score-fatores { margin-top: 8px; font-size: 13px; }
+.score-fatores summary { color: var(--cnj-action); cursor: pointer; font-weight: 600; }
+.score-lista { margin: 8px 0 0; padding-left: 20px; color: var(--cnj-text-subtle); }
+.score-lista li { margin-bottom: 4px; }
+.score-fator { color: var(--cnj-text); font-family: var(--cnj-font-mono); font-weight: 600; }
+.score-versao { margin: 8px 0 0; color: var(--cnj-text-disabled); font-family: var(--cnj-font-mono); font-size: 12px; }
+.batch-itens .score-ressalva { margin-top: 12px; }
+.p2 .p1-lista { display: block; }
+.p1-mono { font-family: var(--cnj-font-mono); font-variant-numeric: tabular-nums; }
+/* Segredo exibido uma única vez: precisa saltar aos olhos e ser selecionável. */
+.p2-token-emitido { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--cnj-warning); border-radius: var(--cnj-radius-small); background: var(--cnj-warning-surface); }
+.p2-token-aviso { margin: 0 0 8px; color: var(--cnj-warning); font-size: 13px; font-weight: 700; }
+.p2-token-valor { display: block; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--cnj-border); border-radius: var(--cnj-radius-small); background: var(--cnj-surface-raised); color: var(--cnj-text); font-family: var(--cnj-font-mono); font-size: 13px; user-select: all; }
+.p2-token-uso { margin: 8px 0 0; color: var(--cnj-text-subtle); font-size: 13px; }
+.p2-trilha-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.p2-trilha-acoes button[disabled] { color: var(--cnj-text-disabled); cursor: not-allowed; }
+
 footer { margin-top: 32px; color: var(--cnj-text-subtle); font-size: 13px; }
 footer p { max-width: 84ch; margin: 0; }
 
