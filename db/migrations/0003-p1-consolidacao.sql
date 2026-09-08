@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS health_probes (
   id UUID PRIMARY KEY,
   portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
   -- O probe mede "alias + número configurado pelo criador". O número é dado
-  -- pelo criador; o alias é derivado dele no servidor, nunca aceito do cliente.
+  -- pelo criador. O alias é derivado dele no servidor, nunca aceito do cliente.
+  -- Sem ponto-e-vírgula em comentário. scripts/migrate.js divide o arquivo por
+  -- esse caractere, então um aqui parte o CREATE TABLE ao meio.
   numero TEXT NOT NULL,
   alias TEXT NOT NULL,
   intervalo_minutos INTEGER NOT NULL CHECK (intervalo_minutos > 0),
