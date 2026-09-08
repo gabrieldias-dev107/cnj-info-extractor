@@ -119,6 +119,19 @@ export function consumirSaude(agoraMs = Date.now()) {
   ], agoraMs, false);
 }
 
+// Cota da API interna, por token de serviço. Fail-closed como a automação, e
+// pelo mesmo motivo invertido: consumo externo não pode furar a cota da
+// operação quando o Redis cai. `limiteDia` vem do próprio token; o teto por
+// minuto é global e existe para conter rajada.
+export function consumirTokenServico(tokenId, limiteDia, agoraMs = Date.now()) {
+  const id = String(tokenId || "desconhecido");
+  const dia = num(limiteDia, num(process.env.RL_API_TOKEN_DIA, 1000));
+  return consumir([
+    { nome: bucket("rl:api:token:" + id + ":min", JANELA_MIN_S, agoraMs), ttl: JANELA_MIN_S, limite: num(process.env.RL_API_TOKEN_MIN, 60), escopo: "token_minuto" },
+    { nome: bucket("rl:api:token:" + id + ":dia", JANELA_DIA_S, agoraMs), ttl: JANELA_DIA_S, limite: dia, escopo: "token_dia" },
+  ], agoraMs, false);
+}
+
 export function consumirLogin(req, agoraMs = Date.now()) {
   var cliente = identificarCliente(req);
   return consumir([

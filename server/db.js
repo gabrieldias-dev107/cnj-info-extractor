@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { classificarEstagio, idadeEmDias, ttlPorEstagio } from "./p0-core.js";
+import { scoreDaConsulta, scoreDoSnapshot } from "./p2-score.js";
 
 function sql() {
   const url = String(process.env.DATABASE_URL || "");
@@ -42,7 +43,7 @@ export async function deleteSession(token) {
 // permite ao worker de lote reaproveitar o snapshot em vez de reconsultar.
 export async function freshSnapshot(numero) {
   const rows = await sql().query(
-    "SELECT s.id,s.process_id,s.dados,s.estagio,s.estagio_codigo,s.estagio_data,s.tpu_versao FROM snapshots s JOIN processes p ON p.id=s.process_id WHERE p.numero=$1 AND s.expira_em > now() ORDER BY s.consultado_em DESC LIMIT 1",
+    "SELECT s.id,s.process_id,s.dados,s.estagio,s.estagio_codigo,s.estagio_data,s.tpu_versao,s.score_faixa,s.score_pontos,s.score_versao,s.consultado_em FROM snapshots s JOIN processes p ON p.id=s.process_id WHERE p.numero=$1 AND s.expira_em > now() ORDER BY s.consultado_em DESC LIMIT 1",
     [numero]
   );
   const linha = rows[0];
@@ -59,6 +60,11 @@ export async function freshSnapshot(numero) {
       idadeDias: data ? idadeEmDias(data) : null,
       versao: linha.tpu_versao,
     },
+    score: scoreDoSnapshot(
+      { faixa: linha.score_faixa, pontos: linha.score_pontos === null || linha.score_pontos === undefined ? null : Number(linha.score_pontos), versao: linha.score_versao },
+      linha.dados,
+      linha.consultado_em ? new Date(linha.consultado_em).toISOString() : null,
+    ),
   };
 }
 
@@ -67,6 +73,10 @@ export async function persistSnapshot({ numero, alias, dados }) {
   const movimentos = consulta.flatMap((processo) => processo.movimentos || []);
   const estagio = classificarEstagio(movimentos);
   const agora = new Date();
+  // A faixa é derivada calculada na escrita, exatamente como `estagio` e
+  // `tpu_versao`. Congela na versão da regra vigente; recalcular exige
+  // reconsultar o processo. Ver specs/p2-integracao/design.md.
+  const score = scoreDaConsulta(dados, agora.toISOString());
   const expira = new Date(agora.getTime() + ttlPorEstagio(estagio.estagio));
   const processId = randomUUID();
   const snapshotId = randomUUID();
@@ -77,13 +87,13 @@ export async function persistSnapshot({ numero, alias, dados }) {
   );
   const id = processos[0].id;
   await db.query(
-    "INSERT INTO snapshots (id,process_id,dados,estagio,estagio_codigo,estagio_data,tpu_versao,consultado_em,expira_em) VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9)",
-    [snapshotId, id, JSON.stringify(dados), estagio.estagio, estagio.codigo, estagio.data, estagio.versao, agora, expira]
+    "INSERT INTO snapshots (id,process_id,dados,estagio,estagio_codigo,estagio_data,tpu_versao,score_faixa,score_pontos,score_versao,score_confianca,consultado_em,expira_em) VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+    [snapshotId, id, JSON.stringify(dados), estagio.estagio, estagio.codigo, estagio.data, estagio.versao, score.faixa, score.pontos, score.versao, score.confianca, agora, expira]
   );
   for (const movimento of movimentos) {
     await db.query("INSERT INTO movements (id,snapshot_id,codigo,nome,data_hora) VALUES ($1,$2,$3,$4,$5)", [randomUUID(), snapshotId, movimento.codigo || null, movimento.nome || null, movimento.dataHora || null]);
   }
-  return { snapshotId, processId: id, estagio, expira };
+  return { snapshotId, processId: id, estagio, score, expira };
 }
 
 export async function recordConsultation(userId, processId, origem) {
@@ -123,7 +133,7 @@ export async function batchForUser(batchId, userId) {
 
 export async function batchItemsForUser(batchId, userId) {
   return sql().query(
-    "SELECT bi.linha,bi.numero,bi.status,bi.erro,s.estagio FROM batch_items bi JOIN batches b ON b.id=bi.batch_id LEFT JOIN snapshots s ON s.id=bi.snapshot_id WHERE bi.batch_id=$1 AND b.user_id=$2 AND b.expires_at > now() ORDER BY bi.linha",
+    "SELECT bi.linha,bi.numero,bi.status,bi.erro,s.estagio,s.score_faixa,s.score_confianca,s.score_versao FROM batch_items bi JOIN batches b ON b.id=bi.batch_id LEFT JOIN snapshots s ON s.id=bi.snapshot_id WHERE bi.batch_id=$1 AND b.user_id=$2 AND b.expires_at > now() ORDER BY bi.linha",
     [batchId, userId]
   );
 }
@@ -151,9 +161,29 @@ export async function finishBatchItem(itemId, { status, erro = null, snapshotId 
   );
 }
 
+// Conta o que a exclusão levou. Sem isto o expurgo não tem o que registrar na
+// trilha, e "expurgo automático" sem evidência não é demonstrável.
+//
+// O texto chega inteiro do chamador, nunca montado por concatenação: este
+// arquivo não tem SQL dinâmico, e abrir uma exceção aqui seria o começo de uma.
+async function apagarContando(db, statement) {
+  const linhas = await db.query(statement);
+  return (linhas[0] && Number(linhas[0].total)) || 0;
+}
+
+const EXPURGO_AUDIT_EVENTS = "WITH apagados AS (DELETE FROM audit_events WHERE expires_at <= now() RETURNING 1) SELECT count(*)::int AS total FROM apagados";
+const EXPURGO_CONSULTATION_EVENTS = "WITH apagados AS (DELETE FROM consultation_events WHERE created_at < now() - interval '180 days' RETURNING 1) SELECT count(*)::int AS total FROM apagados";
+const EXPURGO_SERVICE_TOKENS = "WITH apagados AS (DELETE FROM service_tokens WHERE expires_at <= now() RETURNING 1) SELECT count(*)::int AS total FROM apagados";
+
 // A ordem vai de filha para mãe. O ON DELETE CASCADE da migration cobriria os
 // filhos, mas registros P1 vencem antes do pai (um alerta expira sem o
 // portfólio expirar), então cada tabela é apagada pelo seu próprio expires_at.
+//
+// As tabelas P2 entram ANTES de `users` e `snapshots` pelo mesmo motivo, com uma
+// diferença: `audit_events` referencia usuário, token e processo com
+// ON DELETE SET NULL, então o evento sobrevive ao ator e só sai daqui pelo
+// próprio prazo. Token revogado também é retido até vencer — apagá-lo na
+// revogação deixaria a trilha apontando para ator inexistente.
 export async function purgeExpired() {
   const db = sql();
   await db.query("DELETE FROM sessions WHERE expires_at <= now()");
@@ -165,8 +195,24 @@ export async function purgeExpired() {
   await db.query("DELETE FROM monitored_processes WHERE expires_at <= now()");
   await db.query("DELETE FROM portfolio_members WHERE expires_at <= now()");
   await db.query("DELETE FROM portfolios WHERE expires_at <= now()");
+  const contagens = {
+    audit_events: await apagarContando(db, EXPURGO_AUDIT_EVENTS),
+    consultation_events: await apagarContando(db, EXPURGO_CONSULTATION_EVENTS),
+    service_tokens: await apagarContando(db, EXPURGO_SERVICE_TOKENS),
+  };
   await db.query("DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'");
   await db.query("DELETE FROM users WHERE last_login_at < now() - interval '180 days'");
+
+  // O expurgo audita a si mesmo, só com contagens: nenhum identificador de
+  // processo, usuário ou token entra neste registro.
+  await recordAuditEvent({
+    actorType: "automacao",
+    atorRotulo: "expurgo_retencao",
+    acao: "expurgo_retencao",
+    recurso: Object.entries(contagens).map(([tabela, total]) => tabela + "=" + total).join(";"),
+    resultado: "sucesso",
+  });
+  return contagens;
 }
 
 function p1ExpiresAt() {
@@ -354,7 +400,7 @@ export async function recordHealthMeasurement({ healthProbeId, status, statusCod
 
 export async function latestSnapshotForProcess(processId) {
   const rows = await sql().query(
-    "SELECT id,estagio,estagio_codigo FROM snapshots WHERE process_id=$1 ORDER BY consultado_em DESC LIMIT 1",
+    "SELECT id,estagio,estagio_codigo,score_faixa,score_pontos,score_versao FROM snapshots WHERE process_id=$1 ORDER BY consultado_em DESC LIMIT 1",
     [processId]
   );
   return rows[0] || null;
@@ -434,4 +480,105 @@ export async function deleteHealthProbeForCreator(portfolioId, probeId, userId) 
     [portfolioId, probeId, userId]
   );
   return Boolean(rows[0]);
+}
+
+// ---------------------------------------------------------------------------
+// P2: tokens de serviço e trilha de auditoria.
+// Modelo criador, igual às carteiras: cada usuário emite, lista e revoga só os
+// próprios tokens, e lê só a própria trilha. A autorização mora no SQL.
+// ---------------------------------------------------------------------------
+
+const PREFIXO_TOKEN = "cnjsvc_";
+const FORMATO_TOKEN = /^cnjsvc_([A-Za-z0-9_-]{8})_[A-Za-z0-9_-]{20,}$/;
+
+// O prefixo é a parte não secreta: identifica qual credencial revogar sem
+// revelar nada. É por ele que a busca acontece, para que o hash do segredo nunca
+// seja usado como chave de pesquisa.
+export function prefixoDoToken(token) {
+  const encontrado = FORMATO_TOKEN.exec(String(token || ""));
+  return encontrado ? encontrado[1] : null;
+}
+
+export async function createServiceToken(userId, { nome, limiteDia }) {
+  const prefixo = randomBytes(6).toString("base64url");
+  const token = PREFIXO_TOKEN + prefixo + "_" + randomBytes(32).toString("base64url");
+  const expiresAt = p1ExpiresAt();
+  const rows = await sql().query(
+    "INSERT INTO service_tokens (id,creator_user_id,nome,prefixo,token_hash,limite_dia,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,nome,prefixo,limite_dia,criado_em,ultimo_uso_em,revogado_em,expires_at",
+    [randomUUID(), userId, nome, prefixo, hashToken(token), limiteDia, expiresAt]
+  );
+  if (!rows[0]) return null;
+  // `token` sai daqui uma única vez, na resposta da emissão. O banco guarda só
+  // o hash; não existe caminho para reexibi-lo.
+  return Object.assign({}, rows[0], { token });
+}
+
+export async function serviceTokensForCreator(userId) {
+  return sql().query(
+    "SELECT id,nome,prefixo,limite_dia,criado_em,ultimo_uso_em,revogado_em,expires_at FROM service_tokens WHERE creator_user_id=$1 AND expires_at > now() ORDER BY criado_em DESC",
+    [userId]
+  );
+}
+
+// Revogar não apaga: o registro fica até o próprio expires_at para que a trilha
+// continue apontando para um ator existente.
+export async function revokeServiceTokenForCreator(tokenId, userId) {
+  const rows = await sql().query(
+    "UPDATE service_tokens SET revogado_em=now() WHERE id=$1 AND creator_user_id=$2 AND revogado_em IS NULL AND expires_at > now() RETURNING id,prefixo",
+    [tokenId, userId]
+  );
+  return rows[0] || null;
+}
+
+// A comparação final do hash é feita em tempo constante, no mesmo espírito de
+// server/auth.js:22. Token revogado ou vencido é indistinguível de inexistente
+// para quem chama — a resposta é sempre `token_invalido`.
+export async function serviceTokenByHash(token) {
+  const prefixo = prefixoDoToken(token);
+  if (!prefixo) return null;
+  const rows = await sql().query(
+    "SELECT id,creator_user_id,nome,prefixo,token_hash,limite_dia FROM service_tokens WHERE prefixo=$1 AND revogado_em IS NULL AND expires_at > now()",
+    [prefixo]
+  );
+  const esperado = Buffer.from(hashToken(token), "utf8");
+  for (const linha of rows) {
+    const guardado = Buffer.from(String(linha.token_hash || ""), "utf8");
+    if (guardado.length === esperado.length && timingSafeEqual(guardado, esperado)) {
+      return { id: linha.id, creatorUserId: linha.creator_user_id, nome: linha.nome, prefixo: linha.prefixo, limiteDia: Number(linha.limite_dia) };
+    }
+  }
+  return null;
+}
+
+export async function touchServiceToken(tokenId) {
+  await sql().query("UPDATE service_tokens SET ultimo_uso_em=now() WHERE id=$1", [tokenId]);
+}
+
+// O número CNJ nunca entra aqui: o vínculo com o processo é por `process_id`, e
+// o ator aparece pseudonimizado em `ator_rotulo`.
+export async function recordAuditEvent({
+  actorType,
+  atorRotulo = null,
+  userId = null,
+  serviceTokenId = null,
+  processId = null,
+  acao,
+  recurso = null,
+  resultado,
+  reqId = null,
+}) {
+  await sql().query(
+    "INSERT INTO audit_events (id,actor_type,ator_rotulo,user_id,service_token_id,process_id,acao,recurso,resultado,req_id,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    [randomUUID(), actorType, atorRotulo, userId, serviceTokenId, processId, acao, recurso, resultado, reqId, p1ExpiresAt()]
+  );
+}
+
+export async function auditEventsForUser(userId, { limite = 50, offset = 0 } = {}) {
+  const db = sql();
+  const eventos = await db.query(
+    "SELECT id,actor_type,ator_rotulo,acao,recurso,resultado,process_id,service_token_id,req_id,created_at FROM audit_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+    [userId, limite, offset]
+  );
+  const total = await db.query("SELECT count(*)::int AS total FROM audit_events WHERE user_id=$1", [userId]);
+  return { eventos, total: (total[0] && Number(total[0].total)) || 0 };
 }

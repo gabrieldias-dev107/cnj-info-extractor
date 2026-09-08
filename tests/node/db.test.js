@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { VERSAO_TPU } from "../../server/p0-core.js";
+import { VERSAO_REGRAS_SCORE } from "../../server/p2-score.js";
 
 process.env.DATABASE_URL = "postgres://exemplo/neon";
 
@@ -152,9 +153,17 @@ test("persistSnapshot classifica pelo código TPU e deriva a expiração do est�
   assert.equal(insercaoSnapshot.parametros[3], "expedicao_alvara");
   assert.equal(insercaoSnapshot.parametros[4], 12548);
   assert.equal(insercaoSnapshot.parametros[6], VERSAO_TPU);
+  // A faixa é derivada calculada na escrita, como estagio/tpu_versao.
+  assert.equal(insercaoSnapshot.parametros[7], salvo.score.faixa);
+  assert.equal(insercaoSnapshot.parametros[8], salvo.score.pontos);
+  assert.equal(insercaoSnapshot.parametros[9], VERSAO_REGRAS_SCORE);
+  // Confiança é coluna própria: a tabela do lote e as exportações leem só
+  // colunas, e faixa sem confiança não distingue TPU curado de sinal secundário.
+  assert.equal(insercaoSnapshot.parametros[10], salvo.score.confianca);
+  assert.equal(salvo.score.aprovadaPorRisco, false);
   // TTL de expedicao_alvara é 24h.
-  const consultadoEm = insercaoSnapshot.parametros[7];
-  const expiraEm = insercaoSnapshot.parametros[8];
+  const consultadoEm = insercaoSnapshot.parametros[11];
+  const expiraEm = insercaoSnapshot.parametros[12];
   assert.equal(expiraEm.getTime() - consultadoEm.getTime(), 24 * 60 * 60 * 1000);
 
   // Cada movimento vira uma linha, inclusive os que não classificam nada.
@@ -172,14 +181,21 @@ test("processo sem código curado fica nao_classificado com TTL padrão de 7 dia
   assert.equal(salvo.estagio.estagio, "nao_classificado");
   assert.equal(salvo.estagio.codigo, null);
   const insercao = consultas[1];
-  assert.equal(insercao.parametros[8].getTime() - insercao.parametros[7].getTime(), 7 * 24 * 60 * 60 * 1000);
+  assert.equal(insercao.parametros[12].getTime() - insercao.parametros[11].getTime(), 7 * 24 * 60 * 60 * 1000);
+  // Mesmo sem processo encontrado a faixa é gravada: coluna nula deixaria a
+  // exportação com buraco sem explicação.
+  assert.equal(insercao.parametros[7], "prioridade_baixa");
+  assert.equal(insercao.parametros[9], VERSAO_REGRAS_SCORE);
+  assert.equal(insercao.parametros[10], "baixa");
 });
 
-// O expurgo passou a cobrir as tabelas P1; a ordem vai de filha para mãe para
-// não depender só do ON DELETE CASCADE da migration.
-test("purgeExpired apaga sessões, lotes, snapshots, usuários e registros P1 vencidos", async () => {
-  reiniciar([[], [], [], [], [], [], [], [], [], [], []]);
-  await purgeExpired();
+// O expurgo passou a cobrir as tabelas P1 e P2; a ordem vai de filha para mãe
+// para não depender só do ON DELETE CASCADE da migration. As tabelas P2 entram
+// antes de `users`/`snapshots` porque `audit_events` sobrevive ao ator
+// (ON DELETE SET NULL) e precisa sair pelo próprio prazo.
+test("purgeExpired apaga sessões, lotes, snapshots, usuários e registros P1/P2 vencidos", async () => {
+  reiniciar([[], [], [], [], [], [], [], [], [], [{ total: 3 }], [{ total: 7 }], [{ total: 1 }], [], [], []]);
+  const contagens = await purgeExpired();
   assert.deepEqual(textos(), [
     "DELETE FROM sessions WHERE expires_at <= now()",
     "DELETE FROM batches WHERE expires_at <= now()",
@@ -190,9 +206,32 @@ test("purgeExpired apaga sessões, lotes, snapshots, usuários e registros P1 ve
     "DELETE FROM monitored_processes WHERE expires_at <= now()",
     "DELETE FROM portfolio_members WHERE expires_at <= now()",
     "DELETE FROM portfolios WHERE expires_at <= now()",
+    "WITH apagados AS (DELETE FROM audit_events WHERE expires_at <= now() RETURNING 1) SELECT count(*)::int AS total FROM apagados",
+    "WITH apagados AS (DELETE FROM consultation_events WHERE created_at < now() - interval '180 days' RETURNING 1) SELECT count(*)::int AS total FROM apagados",
+    "WITH apagados AS (DELETE FROM service_tokens WHERE expires_at <= now() RETURNING 1) SELECT count(*)::int AS total FROM apagados",
     "DELETE FROM snapshots WHERE consultado_em < now() - interval '180 days'",
     "DELETE FROM users WHERE last_login_at < now() - interval '180 days'",
+    "INSERT INTO audit_events (id,actor_type,ator_rotulo,user_id,service_token_id,process_id,acao,recurso,resultado,req_id,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
   ]);
+  assert.deepEqual(contagens, { audit_events: 3, consultation_events: 7, service_tokens: 1 });
+});
+
+// Expurgo sem registro do próprio expurgo não é demonstrável. O evento leva só
+// contagens — nenhum identificador de processo, usuário ou token.
+test("purgeExpired audita a si mesmo com as contagens, sem identificador", async () => {
+  reiniciar([[], [], [], [], [], [], [], [], [], [{ total: 2 }], [{ total: 0 }], [{ total: 5 }], [], [], []]);
+  await purgeExpired();
+
+  const evento = consultas[consultas.length - 1];
+  assert.match(evento.texto, /INSERT INTO audit_events/);
+  assert.equal(evento.parametros[1], "automacao");
+  assert.equal(evento.parametros[2], "expurgo_retencao");
+  assert.equal(evento.parametros[3], null, "expurgo não tem usuário");
+  assert.equal(evento.parametros[4], null, "expurgo não tem token");
+  assert.equal(evento.parametros[5], null, "expurgo não tem processo");
+  assert.equal(evento.parametros[6], "expurgo_retencao");
+  assert.equal(evento.parametros[7], "audit_events=2;consultation_events=0;service_tokens=5");
+  assert.equal(evento.parametros[8], "sucesso");
 });
 
 test("createBatch grava lote e itens numa transação, usando tx.query", async () => {
@@ -424,4 +463,126 @@ test("health probe é inserido apenas por criador e com valores parametrizados",
   assert.equal(consultas[0].parametros[3], "00013278820188260344");
   assert.equal(consultas[0].parametros[4], "api_publica_tjsp");
   assert.equal(consultas[0].parametros[5], 60);
+});
+
+// ---------------------------------------------------------------------------
+// P2: tokens de serviço e trilha de auditoria.
+// ---------------------------------------------------------------------------
+
+test("createServiceToken grava só o hash e devolve o valor uma única vez", async () => {
+  reiniciar([[{ id: "tok-1", nome: "integração", prefixo: "abcdefgh", limite_dia: 500, criado_em: "2026-09-08T00:00:00.000Z", ultimo_uso_em: null, revogado_em: null, expires_at: "2027-03-07T00:00:00.000Z" }]]);
+
+  const criado = await db.createServiceToken("user-1", { nome: "integração", limiteDia: 500 });
+
+  assert.match(textos()[0], /INSERT INTO service_tokens \(id,creator_user_id,nome,prefixo,token_hash,limite_dia,expires_at\)/);
+  const parametros = consultas[0].parametros;
+  assert.equal(parametros[1], "user-1");
+  assert.equal(parametros[3], db.prefixoDoToken(criado.token), "o prefixo gravado é o do token emitido");
+  assert.equal(parametros[4], db.hashToken(criado.token), "o banco guarda o hash, nunca o segredo");
+  assert.equal(String(parametros[4]).includes(criado.token), false);
+  assert.match(criado.token, /^cnjsvc_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{20,}$/);
+});
+
+test("serviceTokensForCreator e revoke limitam o escopo ao criador dentro do SQL", async () => {
+  reiniciar([[], []]);
+  await db.serviceTokensForCreator("user-1");
+  await db.revokeServiceTokenForCreator("tok-1", "user-1");
+
+  assert.match(textos()[0], /FROM service_tokens WHERE creator_user_id=\$1 AND expires_at > now\(\)/);
+  // Revogar não apaga: a trilha precisa continuar apontando para um ator que
+  // existe. A linha só sai no expurgo, pelo próprio expires_at.
+  assert.match(textos()[1], /^UPDATE service_tokens SET revogado_em=now\(\) WHERE id=\$1 AND creator_user_id=\$2/);
+  assert.equal(textos()[1].includes("DELETE"), false);
+  assert.deepEqual(consultas[1].parametros, ["tok-1", "user-1"]);
+});
+
+test("serviceTokenByHash busca pelo prefixo público e recusa token fora do formato", async () => {
+  reiniciar([[]]);
+  assert.equal(await db.serviceTokenByHash("token-qualquer"), null);
+  assert.equal(consultas.length, 0, "formato inválido não chega ao banco");
+
+  reiniciar([[{ id: "tok-1", creator_user_id: "user-1", nome: "n", prefixo: "abcdefgh", token_hash: "hash-de-outro", limite_dia: 10 }]]);
+  const token = "cnjsvc_abcdefgh_" + "a".repeat(43);
+  assert.equal(await db.serviceTokenByHash(token), null, "hash divergente não autentica");
+  assert.match(textos()[0], /WHERE prefixo=\$1 AND revogado_em IS NULL AND expires_at > now\(\)/);
+  assert.deepEqual(consultas[0].parametros, ["abcdefgh"]);
+
+  reiniciar([[{ id: "tok-1", creator_user_id: "user-1", nome: "n", prefixo: "abcdefgh", token_hash: db.hashToken(token), limite_dia: 10 }]]);
+  assert.deepEqual(await db.serviceTokenByHash(token), { id: "tok-1", creatorUserId: "user-1", nome: "n", prefixo: "abcdefgh", limiteDia: 10 });
+});
+
+test("recordAuditEvent nunca recebe número de processo, só process_id", async () => {
+  reiniciar([[]]);
+  await db.recordAuditEvent({
+    actorType: "token", atorRotulo: "t_abcdefgh", userId: "user-1", serviceTokenId: "tok-1",
+    processId: "proc-1", acao: "api_v1", recurso: "processos", resultado: "sucesso_cache", reqId: "req-1",
+  });
+
+  const parametros = consultas[0].parametros;
+  assert.deepEqual(parametros.slice(1, 10), ["token", "t_abcdefgh", "user-1", "tok-1", "proc-1", "api_v1", "processos", "sucesso_cache", "req-1"]);
+  assert.equal(parametros.some((valor) => /^\d{20}$/.test(String(valor))), false, "nenhum parâmetro pode ser um número CNJ");
+});
+
+test("auditEventsForUser filtra pelo próprio usuário e pagina", async () => {
+  reiniciar([[], [{ total: 12 }]]);
+  const trilha = await db.auditEventsForUser("user-1", { limite: 10, offset: 20 });
+
+  assert.match(textos()[0], /FROM audit_events WHERE user_id=\$1 ORDER BY created_at DESC LIMIT \$2 OFFSET \$3/);
+  assert.deepEqual(consultas[0].parametros, ["user-1", 10, 20]);
+  assert.equal(trilha.total, 12);
+});
+
+test("leituras de snapshot trazem as colunas de score", async () => {
+  reiniciar([[]]);
+  await db.latestSnapshotForProcess("proc-1");
+  assert.match(textos()[0], /SELECT id,estagio,estagio_codigo,score_faixa,score_pontos,score_versao FROM snapshots/);
+
+  reiniciar([[]]);
+  await db.batchItemsForUser("lote-1", "user-1");
+  assert.match(textos()[0], /s\.estagio,s\.score_faixa,s\.score_confianca,s\.score_versao/);
+});
+
+// A faixa persistida é a autoridade. Reconstruir a explicação ancorada em
+// `consultado_em` reproduz exatamente `faixa` e `pontos` gravados enquanto a
+// versão da regra não mudar.
+test("freshSnapshot devolve a faixa persistida junto do estágio", async () => {
+  const consultadoEm = "2026-09-08T12:00:00.000Z";
+  const dados = {
+    encontrado: true,
+    processos: [{ numeroProcesso: "00013278820188260344", tribunal: "TJSP", grau: "G1", dataAjuizamento: "20180514", movimentos: [] }],
+  };
+  reiniciar([[{
+    id: "snap-1", process_id: "proc-1", dados,
+    estagio: "nao_classificado", estagio_codigo: null, estagio_data: null, tpu_versao: VERSAO_TPU,
+    score_faixa: "prioridade_media", score_pontos: 45, score_versao: VERSAO_REGRAS_SCORE,
+    consultado_em: consultadoEm,
+  }]]);
+
+  const snap = await freshSnapshot("00013278820188260344");
+
+  assert.match(textos()[0], /s\.score_faixa,s\.score_pontos,s\.score_versao,s\.consultado_em/);
+  // Mesma regra + mesmos dados + mesmo instante reproduzem exatamente o que foi
+  // gravado. É isso que permite acompanhar a faixa persistida da explicação sem
+  // que as duas divirjam.
+  assert.equal(snap.score.faixa, "prioridade_media");
+  assert.equal(snap.score.pontos, 45);
+  assert.equal(snap.score.versao, VERSAO_REGRAS_SCORE);
+  assert.equal(snap.score.confianca, "baixa");
+  assert.ok(snap.score.fatores.length > 0, "a explicação acompanha a faixa");
+});
+
+test("faixa gravada por regra antiga não ganha fatores inventados", async () => {
+  reiniciar([[{
+    id: "snap-1", process_id: "proc-1", dados: { encontrado: false, processos: [] },
+    estagio: "nao_classificado", estagio_codigo: null, estagio_data: null, tpu_versao: VERSAO_TPU,
+    score_faixa: "prioridade_alta", score_pontos: 88, score_versao: "score-2020-regra-antiga",
+    consultado_em: "2026-01-01T00:00:00.000Z",
+  }]]);
+
+  const snap = await freshSnapshot("00013278820188260344");
+
+  assert.equal(snap.score.faixa, "prioridade_alta", "a faixa persistida prevalece");
+  assert.equal(snap.score.versao, "score-2020-regra-antiga");
+  assert.deepEqual(snap.score.fatores, []);
+  assert.match(snap.score.ressalva, /versão anterior das regras/);
 });

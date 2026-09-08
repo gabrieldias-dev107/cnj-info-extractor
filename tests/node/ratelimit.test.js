@@ -6,7 +6,7 @@ function ambiente(valores) {
   for (const [nome, valor] of Object.entries(valores)) process.env[nome] = String(valor);
 }
 
-const { consumirDatajud, consumirLogin, identificarCliente } = await import("../../server/rate-limit.js");
+const { consumirDatajud, consumirLogin, consumirTokenServico, identificarCliente } = await import("../../server/rate-limit.js");
 
 function redisMemoria() {
   const contagens = new Map();
@@ -137,6 +137,61 @@ test("timeout Redis também cobre leitura do corpo", async () => {
   } finally {
     globalThis.fetch = anteriorFetch;
     delete process.env.RL_REDIS_TIMEOUT_MS;
+  }
+});
+
+// O limite por token é obrigatório: sem ele um integrador consome sozinho a
+// cota diária do DataJud reservada à operação. Por isso fail-closed, ao
+// contrário do tráfego manual.
+test("cota do token de serviço aplica limite diário do próprio token", async () => {
+  ambiente({ UPSTASH_REDIS_REST_URL: "https://redis.test", UPSTASH_REDIS_REST_TOKEN: "token", RL_API_TOKEN_MIN: 99 });
+  const anteriorFetch = globalThis.fetch;
+  const redis = redisMemoria();
+  globalThis.fetch = redis.fetch;
+  try {
+    assert.equal((await consumirTokenServico("tok-1", 2, 61001)).permitido, true);
+    assert.equal((await consumirTokenServico("tok-1", 2, 61001)).permitido, true);
+    const bloqueado = await consumirTokenServico("tok-1", 2, 61001);
+    assert.deepEqual(bloqueado, { permitido: false, escopo: "token_dia", limite: 2, retryAfter: 86339 });
+    // Cada token tem o próprio balde: estourar um não bloqueia o outro.
+    assert.equal((await consumirTokenServico("tok-2", 2, 61001)).permitido, true);
+    assert.equal(JSON.stringify(redis.chamadas).includes("rl:api:token:tok-1:dia"), true);
+  } finally {
+    globalThis.fetch = anteriorFetch;
+    delete process.env.RL_API_TOKEN_MIN;
+  }
+});
+
+test("cota do token bloqueia rajada pelo teto por minuto", async () => {
+  ambiente({ UPSTASH_REDIS_REST_URL: "https://redis.test", UPSTASH_REDIS_REST_TOKEN: "token", RL_API_TOKEN_MIN: 1 });
+  const anteriorFetch = globalThis.fetch;
+  globalThis.fetch = redisMemoria().fetch;
+  try {
+    assert.equal((await consumirTokenServico("tok-3", 500, 61001)).permitido, true);
+    const bloqueado = await consumirTokenServico("tok-3", 500, 61001);
+    assert.equal(bloqueado.escopo, "token_minuto");
+    assert.equal(bloqueado.retryAfter, 59);
+  } finally {
+    globalThis.fetch = anteriorFetch;
+    delete process.env.RL_API_TOKEN_MIN;
+  }
+});
+
+test("cota do token falha fechada quando o Redis não responde", async () => {
+  ambiente({ UPSTASH_REDIS_REST_URL: "", UPSTASH_REDIS_REST_TOKEN: "" });
+  const semRedis = await consumirTokenServico("tok-4", 100, 0);
+  assert.equal(semRedis.permitido, false);
+  assert.equal(semRedis.indisponivel, true);
+
+  ambiente({ UPSTASH_REDIS_REST_URL: "https://redis.test", UPSTASH_REDIS_REST_TOKEN: "token" });
+  const anteriorFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("redis fora do ar"); };
+  try {
+    const comRedisFora = await consumirTokenServico("tok-4", 100, 0);
+    assert.equal(comRedisFora.permitido, false);
+    assert.equal(comRedisFora.indisponivel, true);
+  } finally {
+    globalThis.fetch = anteriorFetch;
   }
 });
 
