@@ -69,8 +69,8 @@ correspondente.
       `.env.example`, tabela de retenção por tipo de dado.
 - [x] 3.3 Revisão `/codex:review` sobre o diff completo do P2 — Validar: achados
       tratados antes do commit final.
-- [ ] 3.4 Push da `feature/p1-consolidacao` — Validar: **somente após
-      confirmação explícita do responsável**.
+- [x] 3.4 Push da `feature/p1-consolidacao` e criação da `develop` — Validar:
+      confirmação explícita do responsável, obtida antes do push.
 
 ## Desvios do plano original
 
@@ -114,3 +114,5 @@ correspondente.
 | 2026-09-08 | 3.1 | contagem de Functions em `api/` | 11 de 12 |
 | 2026-09-08 | 3.3 | `/codex:review` sobre a working tree | 5 achados P2, todos válidos e corrigidos; 1 teste de regressão por achado |
 | 2026-09-08 | 3.3 | `npm test` após correções | 317/317 |
+| 2026-09-08 | 3.4 | push de `develop` (44 commits) | Preview `dpl_3aqb8CCY97TJRDr54A7TaTmtVyTw` READY, 11 Functions |
+| 2026-09-08 | 3.4 | push de `feature/p1-consolidacao` | nenhum deployment criado — `**: false` confirmado na prática |
