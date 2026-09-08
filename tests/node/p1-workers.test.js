@@ -15,6 +15,7 @@ function reiniciar() {
   registros.emails = [];
   registros.persistidos = [];
   registros.estagiosGravados = [];
+  registros.auditoria = [];
 
   estado.verificarAssinatura = async () => true;
   estado.monitoradosDevidos = async () => [{ id: "monitor-1" }, { id: "monitor-2" }];
@@ -55,6 +56,7 @@ mock.module("../../server/db.js", {
     createPendingAlerts: async (alerta) => { registros.alertas.push(alerta); return [{ id: "alerta-1" }]; },
     undeliveredAlerts: (...args) => estado.alertasPendentes(...args),
     recordAlertSendAttempt: async (id, dados) => { registros.tentativasEnvio.push({ id, ...dados }); },
+    recordAuditEvent: async (evento) => { registros.auditoria.push(evento); },
   },
 });
 
@@ -372,4 +374,47 @@ test("corpo sem identificador é rejeitado antes de tocar o banco", async () => 
   assert.equal(res.statusCode, 400);
   assert.deepEqual(res.body, { error: "item_invalido" });
   assert.equal(buscou, 0);
+});
+
+// A automação é hoje a maior fonte de consultas ao DataJud. Sem estes eventos,
+// a maior parte do acesso a dado processual ficava fora da trilha.
+test("consulta da automação de monitoramento entra na trilha", async () => {
+  reiniciar();
+  await monitorItem(requisicao('{"monitoredProcessId":"monitor-1"}'), resposta());
+
+  assert.deepEqual(registros.auditoria.map((evento) => [evento.actorType, evento.acao, evento.resultado]), [
+    ["automacao", "consulta_automacao", "sucesso"],
+  ]);
+  assert.equal(registros.auditoria[0].processId, "proc-1");
+  assert.equal(registros.auditoria[0].atorRotulo, "monitoramento");
+  assert.equal(JSON.stringify(registros.auditoria).includes("00013278820188260344"), false, "o número CNJ não entra na trilha");
+});
+
+test("falha do monitoramento é registrada com o código do erro", async () => {
+  reiniciar();
+  estado.consultar = async () => { throw Object.assign(new Error("circuito_aberto"), { codigo: "circuito_aberto" }); };
+  const anteriorErro = console.error;
+  console.error = () => {};
+  try {
+    await monitorItem(requisicao('{"monitoredProcessId":"monitor-1"}'), resposta());
+  } finally {
+    console.error = anteriorErro;
+  }
+
+  assert.deepEqual(registros.auditoria.map((evento) => evento.resultado), ["falha_circuito_aberto"]);
+});
+
+test("sonda de saúde audita sucesso e recusa por orçamento", async () => {
+  reiniciar();
+  await saudeItem(requisicao('{"healthProbeId":"probe-1"}'), resposta());
+  assert.deepEqual(registros.auditoria.map((evento) => [evento.acao, evento.resultado, evento.recurso]), [
+    ["consulta_automacao", "sucesso", "api_publica_tjsp"],
+  ]);
+
+  reiniciar();
+  estado.consultar = async () => { throw Object.assign(new Error("orcamento_excedido"), { codigo: "orcamento_excedido" }); };
+  const res = resposta();
+  await saudeItem(requisicao('{"healthProbeId":"probe-1"}'), res);
+  assert.equal(res.statusCode, 429);
+  assert.deepEqual(registros.auditoria.map((evento) => evento.resultado), ["negado_orcamento_excedido"]);
 });

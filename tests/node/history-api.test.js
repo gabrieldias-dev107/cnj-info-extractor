@@ -11,12 +11,14 @@ const estado = {
   ],
 };
 const chamadas = [];
+const auditoria = [];
 
 mock.module("../../server/sso.js", { namedExports: { currentUser: async () => estado.usuario } });
 mock.module("../../server/sso-config.js", { namedExports: { ssoConfigurado: () => estado.ssoLigado } });
 mock.module("../../server/db.js", {
   namedExports: {
     processHistoryForUser: async (...args) => { chamadas.push(args); return estado.historico; },
+    recordAuditEvent: async (evento) => { auditoria.push(evento); },
   },
 });
 
@@ -37,6 +39,7 @@ function reiniciar() {
     { id: "snap-1", consultado_em: "2026-08-31T10:00:00.000Z", estagio: "nao_classificado", estagio_codigo: null, estagio_data: null, tpu_versao: "tpu-2026-04-09-semente-1" },
   ];
   chamadas.length = 0;
+  auditoria.length = 0;
 }
 
 test("histórico devolve snapshots reduzidos e delta TPU para membro do portfólio", async () => {
@@ -56,6 +59,14 @@ test("histórico devolve snapshots reduzidos e delta TPU para membro do portfól
   });
   assert.deepEqual(chamadas, [[NUMERO, "user-1"]]);
   assert.equal(JSON.stringify(res.body).includes("não deve sair"), false, "payload bruto do DataJud não pertence ao contrato de histórico");
+
+  // Ler o histórico é leitura de dado processual e passou a entrar na trilha.
+  assert.equal(auditoria.length, 1);
+  assert.equal(auditoria[0].acao, "historico_processo");
+  assert.equal(auditoria[0].resultado, "sucesso");
+  assert.equal(auditoria[0].userId, "user-1");
+  assert.equal(auditoria[0].atorRotulo.startsWith("u_"), true, "o ator é pseudonimizado");
+  assert.equal(JSON.stringify(auditoria).includes(NUMERO), false, "o número CNJ não entra na trilha");
 });
 
 test("histórico de processo fora do portfólio é um 404 indistinguível", async () => {
@@ -68,6 +79,8 @@ test("histórico de processo fora do portfólio é um 404 indistinguível", asyn
 
   assert.equal(res.statusCode, 404);
   assert.deepEqual(res.body, { error: "processo_nao_encontrado" });
+  // Trilha que só registra sucesso não serve para conformidade.
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["negado_nao_encontrado"]);
 });
 
 test("histórico exige número CNJ com 20 dígitos, mesma origem e sessão", async () => {

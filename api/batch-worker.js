@@ -2,6 +2,7 @@ import { claimBatchItem, finishBatchItem, freshSnapshot, persistSnapshot, record
 import { consultarDatajud } from "../server/datajud-client.js";
 import { verifyQstash } from "../server/queue.js";
 import { consumirDatajud } from "../server/rate-limit.js";
+import { auditar, atorUsuario } from "../server/audit.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -29,9 +30,14 @@ export default async function handler(req, res) {
     // Reaproveita o snapshot ainda válido, como a consulta única já faz. Sem
     // isto, relançar o mesmo lote refazia a chamada ao DataJud e reinseria
     // todos os movimentos do processo a cada vez.
+    // O dono do lote é o ator: a fila roda sem requisição humana, mas o dado
+    // processual foi pedido por ele.
+    const dono = atorUsuario({ id: item.user_id });
+
     const emCache = await freshSnapshot(item.numero);
     if (emCache) {
       await recordConsultation(item.user_id, emCache.processId, "lote");
+      await auditar(Object.assign({}, dono, { acao: "consulta_lote", recurso: "batch:" + item.batch_id, resultado: "sucesso_cache", processId: emCache.processId }));
       await finishBatchItem(item.id, { status: "concluido", snapshotId: emCache.id });
       return res.status(204).end();
     }
@@ -41,11 +47,15 @@ export default async function handler(req, res) {
     const resposta = await consultarDatajud(item.numero, item.alias);
     const salvo = await persistSnapshot({ numero: item.numero, alias: item.alias, dados: resposta });
     await recordConsultation(item.user_id, salvo.processId, "lote");
+    await auditar(Object.assign({}, dono, { acao: "consulta_lote", recurso: "batch:" + item.batch_id, resultado: "sucesso_datajud", processId: salvo.processId }));
     await finishBatchItem(item.id, { status: "concluido", snapshotId: salvo.snapshotId });
     return res.status(204).end();
   } catch (error) {
     const erro = codigo(error);
-    if (item) await finishBatchItem(item.id, { status: "falhou", erro });
+    if (item) {
+      await auditar(Object.assign({}, atorUsuario({ id: item.user_id }), { acao: "consulta_lote", recurso: "batch:" + item.batch_id, resultado: "falha_" + erro }));
+      await finishBatchItem(item.id, { status: "falhou", erro });
+    }
     if (["alias_inexistente", "config_ausente"].includes(erro)) return res.status(204).end();
     return res.status(500).json({ error: erro });
   }

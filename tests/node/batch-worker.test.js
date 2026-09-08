@@ -12,6 +12,7 @@ const estado = {
 };
 const finalizados = [];
 const consultasRegistradas = [];
+const auditoria = [];
 
 mock.module("../../server/db.js", {
   namedExports: {
@@ -20,6 +21,7 @@ mock.module("../../server/db.js", {
     freshSnapshot: (...args) => estado.emCache(...args),
     persistSnapshot: (...args) => estado.persistir(...args),
     recordConsultation: async (...args) => { consultasRegistradas.push(args); },
+    recordAuditEvent: async (evento) => { auditoria.push(evento); },
   },
 });
 mock.module("../../server/datajud-client.js", { namedExports: { consultarDatajud: (...args) => estado.consultar(...args) } });
@@ -49,8 +51,9 @@ function requisicao(corpo, method = "POST") {
 function reiniciar() {
   finalizados.length = 0;
   consultasRegistradas.length = 0;
+  auditoria.length = 0;
   estado.verificarAssinatura = async () => true;
-  estado.reivindicar = async () => ({ id: "item-1", numero: "00013278820188260344", alias: "api_publica_tjsp", user_id: "user-1" });
+  estado.reivindicar = async () => ({ id: "item-1", batch_id: "lote-1", numero: "00013278820188260344", alias: "api_publica_tjsp", user_id: "user-1" });
   estado.consultar = async () => ({ encontrado: true, total: 1, processos: [{ numero: "00013278820188260344" }] });
   estado.persistir = async () => ({ snapshotId: "snap-1", processId: "proc-1" });
   estado.limite = async () => ({ permitido: true });
@@ -163,4 +166,28 @@ test("método diferente de POST é recusado", async () => {
   const res = resposta();
   await handler(requisicao('{"itemId":"item-1"}', "GET"), res);
   assert.equal(res.statusCode, 405);
+});
+
+// O lote é consulta de dado processual como qualquer outra; o ator é o dono do
+// lote, mesmo sem requisição humana no momento da execução.
+test("worker de lote audita a consulta em nome do dono do lote", async () => {
+  reiniciar();
+  await handler(requisicao('{"itemId":"item-1"}'), resposta());
+
+  assert.deepEqual(auditoria.map((evento) => [evento.acao, evento.resultado, evento.recurso]), [
+    ["consulta_lote", "sucesso_datajud", "batch:lote-1"],
+  ]);
+  assert.equal(auditoria[0].userId, "user-1");
+  assert.equal(auditoria[0].processId, "proc-1");
+  assert.equal(JSON.stringify(auditoria).includes("00013278820188260344"), false, "o número CNJ não entra na trilha");
+
+  reiniciar();
+  estado.emCache = async () => ({ id: "snap-cache", processId: "proc-cache", dados: {}, estagio: {} });
+  await handler(requisicao('{"itemId":"item-1"}'), resposta());
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["sucesso_cache"]);
+
+  reiniciar();
+  estado.consultar = async () => { throw new Error("tribunal_indisponivel"); };
+  await handler(requisicao('{"itemId":"item-1"}'), resposta());
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["falha_tribunal_indisponivel"]);
 });

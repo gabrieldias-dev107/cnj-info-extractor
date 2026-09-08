@@ -12,6 +12,7 @@ const estado = {
   publicar: async () => {},
 };
 const finalizados = [];
+const auditoria = [];
 let lotesCriados = [];
 
 mock.module("../../server/sso.js", { namedExports: { currentUser: async () => estado.usuario } });
@@ -30,6 +31,7 @@ mock.module("../../server/db.js", {
       return criado;
     },
     finishBatchItem: async (id, dados) => { finalizados.push({ id, ...dados }); },
+    recordAuditEvent: async (evento) => { auditoria.push(evento); },
   },
 });
 mock.module("../../server/queue.js", { namedExports: { publishBatchItem: (...args) => estado.publicar(...args) } });
@@ -59,6 +61,7 @@ function reiniciar() {
   estado.publicar = async () => {};
   finalizados.length = 0;
   lotesCriados = [];
+  auditoria.length = 0;
 }
 
 test("sem sessão as rotas de lote respondem 401 com dica de SSO", async () => {
@@ -166,4 +169,29 @@ test("nome do arquivo exportado não aceita id com caracteres de escape", async 
   const res = resposta();
   await exportar({ method: "GET", headers, query: { id: 'lote"; drop' } }, res);
   assert.equal(res.headers.get("content-disposition"), 'attachment; filename="triagem-lotedrop.csv"');
+});
+
+// A exportação é a maior saída de dado processual do sistema: um arquivo com
+// até 500 números deixa a ferramenta e passa a viver fora dela.
+test("exportação de lote entra na trilha, com formato e com a recusa", async () => {
+  reiniciar();
+  await exportar({ method: "GET", headers, query: { id: "lote-1" } }, resposta());
+  await exportar({ method: "GET", headers, query: { id: "lote-1", formato: "xlsx" } }, resposta());
+
+  assert.deepEqual(auditoria.map((evento) => [evento.acao, evento.resultado, evento.recurso]), [
+    ["lote_exportado", "sucesso", "batch:lote-1:csv"],
+    ["lote_exportado", "sucesso", "batch:lote-1:xlsx"],
+  ]);
+  assert.equal(auditoria[0].userId, "user-1");
+  assert.equal(auditoria[0].atorRotulo.startsWith("u_"), true, "o ator é pseudonimizado");
+  assert.equal(JSON.stringify(auditoria).includes(NUMERO_A), false, "o número CNJ não entra na trilha");
+
+  reiniciar();
+  const anterior = estado.lote;
+  estado.lote = null;
+  const negado = resposta();
+  await exportar({ method: "GET", headers, query: { id: "lote-de-outro" } }, negado);
+  estado.lote = anterior;
+  assert.equal(negado.statusCode, 404);
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["negado_nao_encontrado"]);
 });

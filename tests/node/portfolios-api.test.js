@@ -23,6 +23,7 @@ const estado = {
   removido: true,
 };
 const chamadas = [];
+const auditoria = [];
 
 mock.module("../../server/sso.js", { namedExports: { currentUser: async () => estado.usuario } });
 mock.module("../../server/sso-config.js", { namedExports: { ssoConfigurado: () => estado.ssoLigado } });
@@ -40,6 +41,7 @@ mock.module("../../server/db.js", {
     portfolioMembersForUser: async (...args) => { chamadas.push(["portfolioMembersForUser", ...args]); return estado.membros; },
     addPortfolioMemberForCreator: async (...args) => { chamadas.push(["addPortfolioMemberForCreator", ...args]); return estado.membroCriado; },
     deletePortfolioMemberForCreator: async (...args) => { chamadas.push(["deletePortfolioMemberForCreator", ...args]); return estado.removido; },
+    recordAuditEvent: async (evento) => { auditoria.push(evento); },
   },
 });
 
@@ -57,6 +59,7 @@ function reiniciar() {
   estado.portfolio = { id: PORTFOLIO_ID, nome: "Alfa", papel: "criador" };
   estado.removido = true;
   chamadas.length = 0;
+  auditoria.length = 0;
 }
 
 test("criador cria, renomeia e exclui o próprio portfólio", async () => {
@@ -203,4 +206,42 @@ test("rotas de portfólio preservam origem e sessão SSO do P0", async () => {
   await portfolios({ method: "GET", headers }, semSessao);
   assert.equal(semSessao.statusCode, 401);
   assert.deepEqual(semSessao.body, { error: "autenticacao_necessaria", login: "sso" });
+});
+
+// Incluir ou remover membro é conceder e retirar acesso a dado processual de
+// terceiro. Sem registro, a liberação de acesso mais sensível do P1 não
+// deixava rastro nenhum.
+test("concessão e remoção de membro entram na trilha, com sucesso e com recusa", async () => {
+  reiniciar();
+  const membros = await handler("../../server/handlers/portfolio-members.js");
+
+  await membros({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, email: "novo@btblue.com.br" } }, response());
+  await membros({ method: "DELETE", headers, query: { portfolioId: PORTFOLIO_ID, userId: MEMBER_ID } }, response());
+
+  assert.deepEqual(auditoria.map((evento) => [evento.acao, evento.resultado]), [
+    ["membro_concedido", "sucesso"],
+    ["membro_removido", "sucesso"],
+  ]);
+  assert.equal(auditoria[0].recurso, "portfolio:" + PORTFOLIO_ID);
+  assert.equal(auditoria[0].userId, USER_ID);
+  assert.equal(auditoria[0].atorRotulo.startsWith("u_"), true, "o ator é pseudonimizado");
+  // O e-mail do convidado é dado pessoal e não pertence à trilha.
+  assert.equal(JSON.stringify(auditoria).includes("novo@btblue.com.br"), false);
+
+  auditoria.length = 0;
+  estado.removido = false;
+  await membros({ method: "DELETE", headers, query: { portfolioId: PORTFOLIO_ID, userId: MEMBER_ID } }, response());
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["negado_nao_encontrado"]);
+});
+
+test("membro que tenta administrar recebe 404 e o evento é registrado como negado", async () => {
+  reiniciar();
+  estado.portfolio = { id: PORTFOLIO_ID, nome: "Alfa", papel: "membro" };
+  const membros = await handler("../../server/handlers/portfolio-members.js");
+
+  const res = response();
+  await membros({ method: "POST", headers, body: { portfolioId: PORTFOLIO_ID, email: "novo@btblue.com.br" } }, res);
+
+  assert.equal(res.statusCode, 404);
+  assert.deepEqual(auditoria.map((evento) => [evento.acao, evento.resultado]), [["portfolio_membros", "negado_nao_criador"]]);
 });

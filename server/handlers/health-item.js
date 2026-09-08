@@ -1,4 +1,5 @@
 import { healthProbeForWorker, recordHealthMeasurement } from "../db.js";
+import { auditar, atorAutomacao } from "../audit.js";
 import { circuitoAberto, classificarFalhaTribunal, consultarComResiliencia } from "../p1-automation.js";
 import { verifyQstash } from "../queue.js";
 import { consumirSaude } from "../rate-limit.js";
@@ -36,16 +37,27 @@ export default async function handler(req, res) {
     }
 
     const inicio = Date.now();
+    // A sonda consulta um processo real no DataJud; é consulta de automação como
+    // a de monitoramento, e entra na trilha pelo mesmo motivo. O recurso é o
+    // alias do tribunal — o número da sonda não sai daqui.
+    const auditarSonda = (resultado) => auditar(Object.assign({}, atorAutomacao("saude"), {
+      acao: "consulta_automacao", recurso: probe.alias, resultado,
+    }));
     try {
       await consultarComResiliencia(probe.numero, probe.alias, { consumirOrcamento: () => consumirSaude() });
       await recordHealthMeasurement({ healthProbeId: probe.id, status: "disponivel", statusCode: 200, duracaoMs: Date.now() - inicio });
+      await auditarSonda("sucesso");
     } catch (error) {
       const erro = codigo(error);
       // Orçamento esgotado é limite nosso, não indisponibilidade do tribunal:
       // não vira medição para não sujar o histórico de saúde.
-      if (erro === "orcamento_excedido") return res.status(429).json({ error: erro });
+      if (erro === "orcamento_excedido") {
+        await auditarSonda("negado_orcamento_excedido");
+        return res.status(429).json({ error: erro });
+      }
       const classificacao = classificarFalhaTribunal(erro);
       await recordHealthMeasurement({ healthProbeId: probe.id, status: classificacao.status, statusCode: classificacao.statusCode, duracaoMs: Date.now() - inicio });
+      await auditarSonda("falha_" + erro);
     }
     return res.status(204).end();
   } catch (error) {

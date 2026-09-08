@@ -3,9 +3,15 @@ import { ssoConfigurado } from "../sso-config.js";
 import { origemPermitida } from "../origin.js";
 import { processHistoryForUser } from "../db.js";
 import { mudancaRelevante } from "../p1-core.js";
+import { auditar, atorUsuario } from "../audit.js";
 
 function erro(res, status, codigo) {
   return res.status(status).json({ error: codigo });
+}
+
+function reqId(req) {
+  const valor = req.headers && req.headers["x-vercel-id"];
+  return typeof valor === "string" ? valor : null;
 }
 
 function snapshotPublico(snapshot) {
@@ -29,9 +35,21 @@ export default async function handler(req, res) {
   const numero = String((req.query || {}).numero || "").replace(/\D/g, "");
   if (!/^\d{20}$/.test(numero)) return erro(res, 400, "numero_invalido");
 
+  // O histórico é leitura de dado processual de terceiro; o 404 aqui pode ser
+  // tanto processo inexistente quanto tentativa de ler carteira alheia. Os dois
+  // casos entram na trilha, sem o número — a vinculação é por `process_id`, e
+  // esta rota parte do número, então o recurso registrado é só a ação.
+  const auditarLeitura = (resultado) => auditar(Object.assign({}, atorUsuario(user), {
+    acao: "historico_processo", recurso: null, resultado, reqId: reqId(req),
+  }));
+
   try {
     const historico = await processHistoryForUser(numero, user.id);
-    if (!historico) return erro(res, 404, "processo_nao_encontrado");
+    if (!historico) {
+      await auditarLeitura("negado_nao_encontrado");
+      return erro(res, 404, "processo_nao_encontrado");
+    }
+    await auditarLeitura("sucesso");
     const snapshots = (Array.isArray(historico) ? historico : historico.snapshots || []).map(snapshotPublico);
     const atual = snapshots[0] || null;
     const anterior = snapshots[1] || null;

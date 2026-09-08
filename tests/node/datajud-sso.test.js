@@ -20,13 +20,20 @@ const estado = {
 };
 const persistidos = [];
 const consultasRegistradas = [];
+const auditoria = [];
+
+const SCORE_FALSO = {
+  faixa: "prioridade_media", pontos: 45, confianca: "baixa", fatores: [],
+  versao: "score-teste", aprovadaPorRisco: false, fonte: "indicio_publico_datajud", ressalva: "ressalva de teste",
+};
 
 mock.module("../../server/sso.js", { namedExports: { currentUser: (...args) => estado.usuario(...args) } });
 mock.module("../../server/db.js", {
   namedExports: {
     freshSnapshot: (...args) => estado.emCache(...args),
-    persistSnapshot: async (dados) => { persistidos.push(dados); return { snapshotId: "snap-1", processId: "proc-1", estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" } }; },
+    persistSnapshot: async (dados) => { persistidos.push(dados); return { snapshotId: "snap-1", processId: "proc-1", estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" }, score: SCORE_FALSO }; },
     recordConsultation: async (...args) => { consultasRegistradas.push(args); },
+    recordAuditEvent: async (evento) => { auditoria.push(evento); },
   },
 });
 
@@ -59,6 +66,7 @@ async function executar({ req = requisicao({ numero: NUMERO }), fetchImpl = asyn
 function reiniciar() {
   persistidos.length = 0;
   consultasRegistradas.length = 0;
+  auditoria.length = 0;
   estado.usuario = async () => ({ id: "user-1", email: "alguem@btblue.com.br" });
   estado.emCache = async () => null;
 }
@@ -151,4 +159,68 @@ test("o alias persistido é o derivado, não o que veio do cliente", async () =>
   assert.equal(persistidos.length, 1);
   assert.equal(persistidos[0].alias, "api_publica_tjsp");
   assert.deepEqual(consultasRegistradas, [["user-1", "proc-1", "unitaria"]]);
+});
+
+// O cache hit era o maior ponto cego da trilha: o usuário recebia o dado
+// processual completo e nada era registrado, porque só o caminho que chamava o
+// DataJud gravava evento.
+test("cache hit registra consulta e evento de auditoria", async () => {
+  reiniciar();
+  estado.emCache = async () => ({
+    id: "snap-antigo",
+    processId: "proc-do-cache",
+    dados: { encontrado: true, total: 1, processos: [{ numeroProcesso: NUMERO }] },
+    estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" },
+    score: SCORE_FALSO,
+  });
+
+  const res = await executar();
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(consultasRegistradas, [["user-1", "proc-do-cache", "cache"]]);
+  assert.deepEqual(auditoria.map((evento) => [evento.acao, evento.resultado, evento.processId]), [
+    ["consulta_unitaria", "sucesso_cache", "proc-do-cache"],
+  ]);
+  assert.equal(auditoria[0].recurso, "api_publica_tjsp");
+  assert.equal(JSON.stringify(auditoria).includes(NUMERO), false, "o número CNJ não entra na trilha");
+});
+
+test("tentativa negada por falta de sessão também vira evento", async () => {
+  reiniciar();
+  estado.usuario = async () => null;
+
+  await executar();
+
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["negado_sem_sessao"]);
+  assert.equal(auditoria[0].atorRotulo, "anonimo");
+  assert.equal(auditoria[0].userId, null);
+});
+
+test("origem cruzada é recusada e registrada", async () => {
+  reiniciar();
+  const res = await executar({
+    req: request({ headers: { host: "app.vercel.app", origin: "https://outro.example" }, body: { numero: NUMERO } }),
+  });
+
+  assert.equal(res.statusCode, 403);
+  assert.deepEqual(auditoria.map((evento) => evento.resultado), ["negado_origem"]);
+});
+
+// A faixa é indício: onde ela aparece, `confianca`, `fatores`, `aprovadaPorRisco`
+// e `ressalva` aparecem junto.
+test("resposta com SSO ligado carrega o score, no cache e fora dele", async () => {
+  reiniciar();
+  const fresca = await executar();
+  assert.deepEqual(fresca.body.score, SCORE_FALSO);
+
+  reiniciar();
+  estado.emCache = async () => ({
+    id: "s", processId: "p",
+    dados: { encontrado: false, total: 0, processos: [] },
+    estagio: { estagio: "nao_classificado", codigo: null, data: null, idadeDias: null, versao: "tpu-teste" },
+    score: SCORE_FALSO,
+  });
+  const cacheada = await executar();
+  assert.deepEqual(cacheada.body.score, SCORE_FALSO);
+  assert.equal(cacheada.body.score.aprovadaPorRisco, false);
 });

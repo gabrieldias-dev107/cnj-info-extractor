@@ -12,6 +12,7 @@ import { currentUser } from "../sso.js";
 import { freshSnapshot, persistSnapshot, recordConsultation } from "../db.js";
 import { validarNumeroParaConsulta } from "../cnj-validation.js";
 import { ssoConfigurado } from "../sso-config.js";
+import { auditar, atorUsuario } from "../audit.js";
 
 var BASE = "https://api-publica.datajud.cnj.jus.br";
 var ALIAS_RE = /^api_publica_[a-z0-9-]{1,52}$/;
@@ -117,9 +118,25 @@ export default async function handler(req, res) {
   var reqId = req.headers["x-vercel-id"] || null;
   var alias = "";
   var digitos = "";
+  var usuario = null;
 
   res.setHeader("Vary", "Origin");
   res.setHeader("Cache-Control", "private, no-store");
+
+  // A trilha só existe no modo interno, onde há banco e identidade. No modo por
+  // senha compartilhada não há a quem atribuir o evento — o README já registra
+  // que ali não existe auditoria individual.
+  function auditarConsulta(resultado, processId) {
+    if (!ssoConfigurado()) return Promise.resolve();
+    var ator = usuario ? atorUsuario(usuario) : { actorType: "usuario", userId: null, atorRotulo: "anonimo" };
+    return auditar(Object.assign({}, ator, {
+      acao: "consulta_unitaria",
+      recurso: alias || null,
+      resultado: resultado,
+      processId: processId || null,
+      reqId: reqId,
+    }));
+  }
 
   function responderErro(codigo, extra) {
     var status = STATUS_POR_CODIGO[codigo] || 500;
@@ -142,12 +159,18 @@ export default async function handler(req, res) {
     if (req.method !== "POST") return responderErro("metodo_nao_permitido", { metodo: req.method });
 
     if (!origemPermitida(req)) {
+      // Tentativa recusada também entra na trilha: registro só de sucesso não
+      // serve para conformidade.
+      await auditarConsulta("negado_origem");
       return responderErro("origem_nao_permitida", { origin: req.headers.origin || null });
     }
 
     if (ssoConfigurado()) {
-      var usuario = await currentUser(req);
-      if (!usuario) return responderErro("autenticacao_necessaria");
+      usuario = await currentUser(req);
+      if (!usuario) {
+        await auditarConsulta("negado_sem_sessao");
+        return responderErro("autenticacao_necessaria");
+      }
     } else if (!sessaoValida(req)) return responderErro("autenticacao_necessaria");
 
     var body = req.body;
@@ -176,9 +199,15 @@ export default async function handler(req, res) {
       var emCache = await freshSnapshot(digitos);
       if (emCache) {
         log("info", "consulta_cache", { reqId: reqId, alias: alias, numero: sufixo(digitos) });
+        // O cache hit era o maior ponto cego da trilha: o usuário via o dado
+        // processual completo e nada ficava registrado, porque só o caminho que
+        // chamava o DataJud gravava `consultation_events`.
+        await recordConsultation(usuario.id, emCache.processId, "cache");
+        await auditarConsulta("sucesso_cache", emCache.processId);
         return res.status(200).json(Object.assign({}, emCache.dados, {
           cache: "servidor",
           estagio: emCache.estagio,
+          score: emCache.score,
           processId: emCache.processId,
         }));
       }
@@ -241,7 +270,9 @@ export default async function handler(req, res) {
       if (ssoConfigurado()) {
         var salvoVazio = await persistSnapshot({ numero: digitos, alias: alias, dados: vazio });
         await recordConsultation(usuario.id, salvoVazio.processId, "unitaria");
+        await auditarConsulta("sucesso_indice_vazio", salvoVazio.processId);
         vazio.estagio = salvoVazio.estagio;
+        vazio.score = salvoVazio.score;
         vazio.processId = salvoVazio.processId;
       }
       res.status(200).json(vazio);
@@ -266,7 +297,9 @@ export default async function handler(req, res) {
     if (ssoConfigurado()) {
       var salvo = await persistSnapshot({ numero: digitos, alias: alias, dados: resposta });
       await recordConsultation(usuario.id, salvo.processId, "unitaria");
+      await auditarConsulta("sucesso_datajud", salvo.processId);
       resposta.estagio = salvo.estagio;
+      resposta.score = salvo.score;
       resposta.processId = salvo.processId;
     }
     res.status(200).json(resposta);

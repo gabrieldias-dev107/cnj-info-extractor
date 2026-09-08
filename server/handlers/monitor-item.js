@@ -1,4 +1,5 @@
 import { createPendingAlerts, latestSnapshotForProcess, monitoredProcessForWorker, persistSnapshot, updateMonitoredProcessStage } from "../db.js";
+import { auditar, atorAutomacao } from "../audit.js";
 import { consultarComResiliencia } from "../p1-automation.js";
 import { mudancaRelevante } from "../p1-core.js";
 import { verifyQstash } from "../queue.js";
@@ -62,12 +63,20 @@ export default async function handler(req, res) {
     }
     // Gravado sempre, com ou sem alerta: é o que este item passa a conhecer.
     await updateMonitoredProcessStage(monitorado.id, { estagio: salvo.estagio.estagio, codigo: salvo.estagio.codigo });
+    // A automação também consulta dado processual. Sem este registro, a maior
+    // fonte de consultas do sistema ficava fora da trilha.
+    await auditar(Object.assign({}, atorAutomacao("monitoramento"), {
+      acao: "consulta_automacao", recurso: "monitored_process", resultado: "sucesso", processId: monitorado.process_id,
+    }));
     return res.status(204).end();
   } catch (error) {
     const erro = codigo(error);
     const status = statusDoErro(erro);
     // Só identificadores no log: o número CNJ não sai daqui.
     console.error(JSON.stringify({ evento: "monitoramento_falhou", monitoredProcessId: monitoradoId, erro }));
+    await auditar(Object.assign({}, atorAutomacao("monitoramento"), {
+      acao: "consulta_automacao", recurso: "monitored_process", resultado: "falha_" + erro,
+    }));
     return status === 204 ? res.status(204).end() : res.status(status).json({ error: erro });
   }
 }
