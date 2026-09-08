@@ -116,3 +116,6 @@ correspondente.
 | 2026-09-08 | 3.3 | `npm test` após correções | 317/317 |
 | 2026-09-08 | 3.4 | push de `develop` (44 commits) | Preview `dpl_3aqb8CCY97TJRDr54A7TaTmtVyTw` READY, 11 Functions |
 | 2026-09-08 | 3.4 | push de `feature/p1-consolidacao` | nenhum deployment criado — `**: false` confirmado na prática |
+| 2026-09-08 | 2.3 | `0003` contra banco vazio (Neon de Preview) | `NeonDbError` 42601 na posição 235 — `;` em comentário partia `CREATE TABLE health_probes`; corrigido e coberto por `tests/node/migrations.test.js` |
+| 2026-09-08 | 2.3 | `node scripts/migrate.js` 2× no Neon de Preview | 4 migrations aplicadas nas duas execuções, `rc=0` — idempotência provada contra banco real |
+| 2026-09-08 | 2.3 | `information_schema`/`pg_constraint` no Preview | 17 tabelas (8 P0 + 7 P1 + 2 P2); 4 colunas `snapshots.score*`; 3 FKs de `audit_events` com `confdeltype = n` (SET NULL); `consultation_events_created_at_idx` presente; CHECK de `actor_type` com os três valores |
