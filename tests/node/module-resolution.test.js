@@ -100,3 +100,19 @@ test("Vercel mantém as rotas P1 em no máximo 12 Functions", () => {
     );
   }
 });
+
+// Só `develop` e `main` implantam. Sem esta trava, cada push de branch de
+// trabalho gastaria um deployment e publicaria uma Preview que ninguém pediu —
+// com dado processual real, já que a Preview aponta para o Neon de Preview.
+// A regra de sobreposição do Vercel é "basta um padrão verdadeiro", por isso
+// `**: false` não bloqueia as duas branches listadas como `true`.
+test("Vercel implanta apenas develop (Preview) e main (Production)", () => {
+  const { git } = JSON.parse(readFileSync("vercel.json", "utf8"));
+  assert.ok(git && git.deploymentEnabled, "vercel.json precisa declarar git.deploymentEnabled");
+  assert.equal(git.deploymentEnabled.main, true, "main é a branch de produção");
+  assert.equal(git.deploymentEnabled.develop, true, "develop é a branch de integração");
+  assert.equal(git.deploymentEnabled["**"], false, "nenhuma outra branch implanta");
+
+  const readme = readFileSync("README.md", "utf8");
+  assert.ok(readme.includes("develop"), "README precisa descrever o fluxo de branches");
+});

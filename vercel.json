@@ -1,5 +1,13 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "develop": true,
+      "**": false
+    }
+  },
   "rewrites": [
     { "source": "/api/auth/login", "destination": "/api/p1-auth-handler?handler=login" },
     { "source": "/api/auth/callback", "destination": "/api/p1-auth-handler?handler=callback" },

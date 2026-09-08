@@ -399,11 +399,55 @@ do processo **nunca** é logado inteiro — só os 4 últimos dígitos.
 
 ## Deploy (Vercel)
 
-Site estático + Functions serverless, sem build. Deploy automático a cada `git push`.
+Site estático + Functions serverless, sem build.
 
-- `vercel.json` — `cleanUrls` e cabeçalhos de segurança (CSP, HSTS, `frame-ancestors`,
-  `Permissions-Policy`, `nosniff`, `Referrer-Policy`), além dos rewrites internos.
+- `vercel.json` — `cleanUrls`, cabeçalhos de segurança (CSP, HSTS, `frame-ancestors`,
+  `Permissions-Policy`, `nosniff`, `Referrer-Policy`), os rewrites internos e quais
+  branches implantam.
 - `.vercelignore` — exclui `tests/` do site publicado (continua versionado no Git).
+
+### Fluxo de branches e ambientes
+
+```text
+feature/*  ──▶  develop  ──▶  main
+   (sem         (Preview)     (Production)
+   deploy)
+```
+
+| Branch | Ambiente | Como dispara |
+|---|---|---|
+| `develop` | Preview | Integração do Vercel com o Git, a cada push/merge |
+| `main` | Production | Integração do Vercel com o Git, a cada push/merge |
+| qualquer outra | nenhum | Bloqueada em `vercel.json` |
+
+A branch de produção do projeto é `main`; qualquer outra branch habilitada gera
+Preview. `develop` tem URL estável
+(`cnj-info-extractor-git-develop-<escopo>.vercel.app`), então dá para homologar
+sempre no mesmo endereço.
+
+O bloqueio das demais branches fica em `vercel.json`:
+
+```json
+"git": {
+  "deploymentEnabled": { "main": true, "develop": true, "**": false }
+}
+```
+
+Sem ele, todo push de branch de trabalho consumiria um deployment e publicaria
+uma Preview que ninguém pediu — apontando para o Neon de Preview, com dado
+processual real. A regra de sobreposição do Vercel é "basta um padrão
+verdadeiro", por isso `**: false` não afeta as duas branches marcadas como
+`true`. Para liberar uma branch pontualmente, acrescente-a ao mapa com `true`.
+
+> **Ordem obrigatória em toda promoção.** Aplique `npm run db:migrate` no Neon do
+> ambiente alvo **antes** do merge que gera o deploy. As migrações são
+> idempotentes e rodam todas a cada execução; um deploy que chega antes da
+> migração encontra colunas que ainda não existem. Vale para `develop` (Neon de
+> Preview) e para `main` (Neon de Produção).
+
+O merge é o gatilho, e não há gate de teste no caminho: o GitHub Actions roda
+`npm test` e `npm run check` em todo push e pull request, mas quem decide o
+deploy é a integração do Vercel. Não faça merge com o CI vermelho.
 
 ### Limite de Functions no plano Hobby
 
