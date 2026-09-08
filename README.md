@@ -60,6 +60,12 @@ a consulta online é feita, o órgão julgador vem no retorno do DataJud.
 - `api/monitor-worker.js`, `api/health-worker.js`, `api/digest-worker.js` — ticks P1 assinados
   pelo QStash; os respectivos `*-item-worker` executam uma unidade de trabalho.
 - `server/` — SSO, banco, fila, validação CNJ, planilhas, origem e rate limit.
+- `server/handlers/api-v1.js` — API interna `/api/v1`, autenticada por token de serviço.
+- `server/handlers/service-tokens.js`, `server/handlers/audit.js` — emissão/revogação de
+  token e leitura da trilha de auditoria, ambas por sessão SSO.
+- `server/p2-score.js` — score de elegibilidade (módulo puro, regras versionadas).
+- `server/audit.js` — pseudonimização do ator e gravação não fatal da trilha.
+- `docs/retencao.md` — política de retenção por tipo de dado.
 - `db/migrations/` — esquema Neon; aplicado por `scripts/migrate.js` (`npm run db:migrate`).
 - `scripts/check-imports.mjs` — `npm run check`: importa cada módulo para pegar
   especificador quebrado, que `node --check` não detecta.
@@ -91,6 +97,8 @@ Variáveis documentadas em `.env.example`. Localmente, `vercel env pull` gera o 
 | `QSTASH_URL` | conta fora da região padrão | Endpoint regional do QStash, lido pelo SDK |
 | `RESEND_API_KEY` | P1 | Chave de runtime para enviar o digest diário |
 | `RESEND_FROM_EMAIL` | P1 | Remetente verificado no Resend para o digest diário |
+| `RL_API_TOKEN_DIA` | não | Cota diária padrão de um token de serviço (padrão: 1.000) |
+| `RL_API_TOKEN_MIN` | não | Teto por minuto de cada token de serviço (padrão: 60) |
 
 ### Rotação da chave do DataJud
 
@@ -173,6 +181,97 @@ Mantenha o header `Upstash-Forward-x-vercel-protection-bypass` quando Deployment
 estiver ativa, como no schedule de expurgo acima. Criação de schedules é operação externa ao
 repositório.
 
+### P2: API interna, faixa de prioridade e trilha de auditoria
+
+A P2 exige o mesmo modo interno da P1. Nenhuma rota nova virou Function: todas
+entram na Function agregadora existente, via rewrite em `vercel.json`.
+
+| Rota | Autenticação | Contrato |
+|---|---|---|
+| `POST /api/v1/decodificar` | `Authorization: Bearer` | Decodifica o número e devolve o alias DataJud derivado. Não consulta o DataJud; debita só a cota do token. `valido` é o dígito verificador e nada mais; a existência de índice público fica em `consultaOnlineDisponivel`. |
+| `POST /api/v1/processos` | `Authorization: Bearer` | Consulta com cache (snapshot fresco antes do DataJud) e devolve snapshot reduzido, estágio TPU e faixa de prioridade. |
+| `GET`/`POST`/`DELETE /api/service-tokens` | Sessão SSO | Lista, emite e revoga tokens. Cada usuário administra somente os próprios. |
+| `GET /api/audit?limite=&offset=` | Sessão SSO | Trilha de auditoria do próprio usuário, paginada. |
+
+#### O contrato é o caminho, não a URL da Function
+
+As rotas acima são o contrato público. A URL interna da agregadora
+(`/api/p1-query-handler?handler=...`) continua endereçável por acidente do
+roteamento da Vercel e **não é contrato**: não a use como endpoint, não a
+divulgue, e não conte com ela em integração. Um `?handler=` duplicado na query
+responde `400 rota_ambigua` — a Function recusa a ambiguidade em vez de escolher
+um dos valores.
+
+#### Emissão, rotação e revogação de token
+
+O token é emitido no painel **Tokens de serviço** da interface. O valor em claro
+aparece **uma única vez**, na resposta da emissão: o banco guarda apenas o hash
+SHA-256 e o prefixo público (os 8 caracteres depois de `cnjsvc_`), que serve para
+identificar qual credencial revogar.
+
+- **Rotacionar** é emitir um token novo, apontar o integrador para ele e revogar
+  o antigo — nesta ordem. Não existe "renovar": não há caminho para reexibir um
+  segredo.
+- **Revogar** vale imediatamente e não apaga a linha; o registro fica até o
+  próprio prazo para que a trilha continue apontando para um ator existente.
+- Um token de outro criador responde `404 token_nao_encontrado`, sem revelar se
+  existe.
+- Token revogado, vencido e inexistente respondem todos `401 token_invalido`.
+
+Exemplo de chamada:
+
+```bash
+curl -X POST "$APP_BASE_URL/api/v1/processos" \
+  -H "Authorization: Bearer $CNJ_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"numero":"00013278820188260344"}'
+```
+
+#### Cota por token
+
+Cada token tem um limite diário próprio (padrão `RL_API_TOKEN_DIA`, 1.000) e um
+teto por minuto global (`RL_API_TOKEN_MIN`, 60). Estourar qualquer um devolve
+`429 limite_excedido` com `Retry-After`. Ao contrário do rate limit do tráfego
+manual, esta cota **falha fechada**: sem Redis a chamada é negada, porque consumo
+externo não pode furar a cota diária do DataJud reservada à operação. A chamada
+que efetivamente alcança o DataJud também debita os contadores globais — e ali a
+API interna trata contador indisponível como recusa, em vez de herdar o
+fail-open do tráfego manual.
+
+#### Faixa de prioridade
+
+A faixa (`prioridade_alta`, `prioridade_media`, `prioridade_baixa`) é calculada
+por `server/p2-score.js` a partir de sinais públicos: estágio TPU aprovado, idade
+do processo pelo ajuizamento, grau, segmento e cadência de movimentos. É gravada
+no snapshot junto com a confiança e a versão da regra, e aparece na consulta
+unitária, na tabela do lote, nas exportações CSV e XLSX e na API v1. O CSV e o
+XLSX levam `score_faixa`, `score_confianca`, `score_versao` e `score_ressalva`;
+os `fatores` ficam de fora por serem uma lista por linha — quem precisa deles usa
+a consulta unitária ou `POST /api/v1/processos`.
+
+> **A faixa é indício, com pesos semente pendentes de aprovação da área de risco.
+> Não é decisão de crédito nem certidão.** Por isso ela nunca viaja sozinha: toda
+> saída carrega `confianca`, `fatores` (cada um com a própria pontuação e o
+> motivo), `versao`, `fonte` e `aprovadaPorRisco: false`. Sem estágio TPU curado
+> — hoje o caso comum, já que só o código `12548` está mapeado — a confiança é
+> `baixa` e a ressalva declara que o estágio é desconhecido.
+
+Como o score é gravado na escrita, um snapshot antigo mantém a faixa da versão de
+regra em que foi gravado; reconsultar o processo recalcula.
+
+#### Trilha de auditoria
+
+Passam a gerar evento: consulta unitária (inclusive servida do cache), consulta
+em lote, consultas da automação de monitoramento e de saúde, leitura de
+`GET /api/process-history`, exportação de lote, concessão e remoção de membro de
+carteira, emissão/uso/revogação de token e recusa por cota — mais as **tentativas
+negadas** (401, 403 e 404 cross-portfolio). O expurgo diário também registra a
+si mesmo, apenas com contagens.
+
+A trilha **nunca guarda o número CNJ**: o vínculo com o processo é por
+`process_id`, e o ator aparece pseudonimizado. Prazos, o que o expurgo apaga e o
+crescimento esperado estão em [`docs/retencao.md`](docs/retencao.md).
+
 ### Triagem em lote
 
 O painel aceita até 500 números por envio, separados por linha, vírgula ou ponto
@@ -207,8 +306,11 @@ curl -X POST "https://qstash.upstash.io/v2/schedules/$APP_BASE_URL/api/maintenan
   -H "Upstash-Forward-x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET"
 ```
 
-O job apaga sessões e lotes vencidos, snapshots com mais de 180 dias e usuários
-sem login no mesmo período.
+O job apaga sessões e lotes vencidos, snapshots com mais de 180 dias, usuários
+sem login no mesmo período e, desde a P2, eventos de auditoria vencidos, eventos
+de consulta acima de 180 dias e tokens de serviço vencidos — nesta ordem, antes
+de `users` e `snapshots`. Cada execução grava um evento de auditoria de si mesma,
+só com as contagens. A política completa está em `docs/retencao.md`.
 
 O cabeçalho `Upstash-Forward-*` só é necessário em deployments com **Deployment
 Protection** ligada: sem ele a Vercel responde 302 para o próprio SSO e o job
@@ -311,18 +413,27 @@ para a Function agregadora correspondente. Assim, URLs e contratos — inclusive
 QStash sobre a URL pública original — permanecem os mesmos. Não volte a expor os módulos em
 `api/` sem reduzir o total ou migrar o plano; o teste de resolução impede ultrapassar o teto.
 
+As quatro rotas P2 entraram na mesma agregadora, sem consumir Function nova. Um handler que
+precise de `config = { api: { bodyParser: false } }` **não** pode entrar ali, porque a
+configuração vale para o arquivo inteiro — nesse caso o custo passa a ser uma Function
+(12/12), e a decisão precisa ser reavaliada antes de codificar.
+
 A CSP não permite `unsafe-inline`: **não** introduza `<script>` ou `style=` inline em
 `index.html` sem revisar a política.
 
 ### Pré-requisitos P1 para Preview e Produção
 
 Antes do deploy, aplique `npm run db:migrate` no Neon do ambiente alvo para executar
-`0003-p1-consolidacao.sql`; configure SSO, Redis, QStash, Resend e `APP_BASE_URL` daquele
+`0003-p1-consolidacao.sql` e `0004-p2-integracao.sql` (rode duas vezes seguidas: as
+migrações são idempotentes e rodam a cada execução); configure SSO, Redis, QStash, Resend e `APP_BASE_URL` daquele
 ambiente; depois crie os três schedules externos. Homologue em Preview autenticado: criar
 carteira, convidar membro já existente, adicionar processo a partir da consulta, observar um
-tick assinado de monitoramento e de saúde, e validar aceite e recusa do digest. Só então repita
-no ambiente de Produção. Testes locais não comprovam Entra, Neon, QStash, Resend, schedules
-nem Deployment Protection.
+tick assinado de monitoramento e de saúde, e validar aceite e recusa do digest. Para a P2,
+emita um token na interface, chame `POST /api/v1/decodificar` e `POST /api/v1/processos` com
+`curl`, confirme `401` sem token, `401` com token revogado e `429` ao estourar a cota diária;
+depois confira em `GET /api/audit` o uso do token, o cache hit e a tentativa negada, e que um
+segundo usuário não vê nada disso. Só então repita no ambiente de Produção. Testes locais não
+comprovam Entra, Neon, QStash, Resend, schedules nem Deployment Protection.
 
 ## Testes
 
