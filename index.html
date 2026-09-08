@@ -8,8 +8,9 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="container">
-    <header>
+  <main class="container jira-cnj">
+    <header class="app-header">
+      <p class="contexto-produto">CNJ · consulta processual</p>
       <h1>Decodificador de Número CNJ</h1>
       <button id="session-logout" class="btn-secundario logout" type="button" hidden>Sair da consulta online</button>
       <p class="subtitulo">
@@ -21,7 +22,7 @@
       </p>
     </header>
 
-    <section class="entrada">
+    <section class="entrada consulta-rapida">
       <label for="cnj-input">Número do processo</label>
       <input
         id="cnj-input"
@@ -47,7 +48,7 @@
 
     <section id="resultado-online" class="resultado-online vazio" aria-live="polite"></section>
 
-    <section class="lote" aria-labelledby="lote-titulo">
+    <section class="lote modulo-operacional" aria-labelledby="lote-titulo">
       <h2 id="lote-titulo">Triagem em lote</h2>
       <p>Cole até 500 números CNJ, um por linha. Linhas inválidas ficam registradas; números repetidos não entram na fila.</p>
       <form id="batch-form">
@@ -63,7 +64,7 @@
       <a id="batch-export-xlsx" class="btn-secundario" hidden>Baixar XLSX</a>
     </section>
 
-    <section class="p1 glossario" aria-labelledby="glossario-titulo">
+    <section class="p1 glossario modulo-operacional" aria-labelledby="glossario-titulo">
       <h2 id="glossario-titulo">Glossário de movimentos (TPU)</h2>
       <p>
         Estágio jurídico só vem de código da Tabela Processual Unificada. Esta é a
@@ -75,7 +76,7 @@
       <div id="glossario-resultado" class="glossario-resultado" role="status" aria-live="polite"></div>
     </section>
 
-    <section class="p1 carteiras" aria-labelledby="portfolios-titulo">
+    <section class="p1 carteiras modulo-operacional" aria-labelledby="portfolios-titulo">
       <h2 id="portfolios-titulo">Carteiras monitoradas</h2>
       <p>
         Uma carteira agrupa processos reconsultados de tempos em tempos. Quem cria a
@@ -92,7 +93,7 @@
       <div id="portfolio-detalhe" class="p1-detalhe" hidden></div>
     </section>
 
-    <section class="p1 historico" aria-labelledby="historico-titulo">
+    <section class="p1 historico modulo-operacional" aria-labelledby="historico-titulo">
       <h2 id="historico-titulo">Histórico do processo</h2>
       <p>
         Mostra as consultas já registradas e a mudança de estágio entre as duas mais
@@ -109,7 +110,7 @@
       <div id="historico-resultado" class="p1-detalhe"></div>
     </section>
 
-    <section class="ajuda">
+    <section class="ajuda modulo-referencia">
       <h2>Como o número é formado</h2>
       <p class="formato"><code>NNNNNNN-DD.AAAA.J.TR.OOOO</code></p>
       <dl>

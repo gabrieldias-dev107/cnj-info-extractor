@@ -41,6 +41,19 @@ test("index.html publica as seções P1 e carrega os scripts na ordem certa", ()
   assert.deepEqual(ordem.slice().sort((a, b) => a - b), ordem, "a ordem dos scripts clássicos importa");
 });
 
+test("interface usa tokens operacionais Jira adaptados ao CNJ", () => {
+  const html = readFileSync("index.html", "utf8");
+  const css = readFileSync("styles.css", "utf8");
+  assert.match(html, /<main class="container jira-cnj">/);
+  for (const token of ["--cnj-background-neutral", "--cnj-surface-raised", "--cnj-text", "--cnj-text-subtle", "--cnj-border", "--cnj-action", "--cnj-action-hover", "--cnj-focus"]) {
+    assert.match(css, new RegExp(token + "\\s*:"), "falta o token " + token);
+  }
+  assert.match(css, /\.jira-cnj\s*\{/);
+  assert.match(css, /font-family:\s*var\(--cnj-font-sans\)/);
+  assert.match(css, /:focus-visible/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 // O cliente P1 nunca escolhe o índice do DataJud: quem deriva o alias é o
 // servidor, a partir do número. Ver api/health-probes.js.
 test("cliente P1 não envia alias para as sondas de saúde", () => {
